@@ -1,0 +1,7 @@
+/target
+.env
+*.pdb
+*.db
+*.db-shm
+*.db-wal
+.claude/

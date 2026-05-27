@@ -1,0 +1,24 @@
+[package]
+name = "blindspot-api"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "blindspot-api"
+path = "src/main.rs"
+
+[dependencies]
+axum               = "0.7"
+tokio              = { version = "1", features = ["full"] }
+sqlx               = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
+# Bundled SQLite — aucune installation système requise (fonctionne sur Windows)
+# Version 0.28 = même contrainte que sqlx-sqlite 0.8 (^0.28), pas de conflit de links.
+libsqlite3-sys     = { version = "0.28", features = ["bundled"] }
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+reqwest            = { version = "0.12", features = ["json"] }
+tower-http         = { version = "0.5", features = ["cors", "fs"] }
+dotenvy            = "0.15"
+anyhow             = "1"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

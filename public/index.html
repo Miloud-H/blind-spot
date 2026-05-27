@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BLIND SPOT — Montréal</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Oxanium:wght@300;400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<header>
+  <div class="logo">BLIND<span>SPOT</span> // MTL</div>
+  <div class="status-bar">
+    <div class="status-item">
+      <div class="dot loading" id="dot-osm"></div>
+      <span id="status-osm">CHARGEMENT OSM...</span>
+    </div>
+    <div class="status-item">
+      <div class="dot" id="dot-sys"></div>
+      <span>SYSTÈME ACTIF</span>
+    </div>
+  </div>
+</header>
+
+<div class="main">
+  <div style="position:relative;flex:1;">
+    <div id="map"></div>
+    <div class="mode-badge" id="mode-badge">⊕ CLIQUER POUR PLACER</div>
+    <div class="loading-overlay" id="loading">
+      <div class="loading-text">INTERROGATION OVERPASS API</div>
+      <div class="loading-bar"><div class="loading-bar-fill"></div></div>
+    </div>
+    <!-- Évitement routing -->
+    <div class="preset-control" id="preset-control">
+      <span class="preset-label">ÉVITEMENT</span>
+      <button class="preset-btn conservative" id="preset-conservative" onclick="setPreset('conservative')">RÉDUIT</button>
+      <button class="preset-btn standard active" id="preset-standard" onclick="setPreset('standard')">STANDARD</button>
+      <button class="preset-btn high" id="preset-high" onclick="setPreset('high')">MAXIMAL</button>
+    </div>
+
+    <!-- Geoloc button -->
+    <button class="geoloc-btn" id="geoloc-btn" title="Me localiser">📍</button>
+
+    <!-- Route bar -->
+    <div class="route-bar" id="route-bar" style="display:none;">
+      <div class="rb-section">
+        <div class="rb-badge a">A</div>
+        <span class="rb-text" id="rb-start">Non défini</span>
+      </div>
+      <div class="rb-sep">▶</div>
+      <div class="rb-section">
+        <div class="rb-badge b">B</div>
+        <span class="rb-text" id="rb-end">Non défini</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <!-- TABS -->
+    <div class="tabs">
+      <div class="tab active" id="tab-route" onclick="switchTab('route')">▶ ITINÉRAIRE</div>
+      <div class="tab" id="tab-cams" onclick="switchTab('cams')">📹 CAMÉRAS</div>
+    </div>
+
+    <!-- ═══ ROUTE TAB ═══ -->
+    <div class="tab-content" id="content-route">
+      <div class="panel" style="flex:1;overflow-y:auto;border-bottom:none;">
+        <div class="panel-title">// ITINÉRAIRE SÉCURISÉ</div>
+
+        <!-- Start -->
+        <div class="route-point">
+          <div class="route-badge a">A</div>
+          <span class="route-coord" id="start-coord">Non défini</span>
+          <button class="btn route-pick-btn" id="btn-set-start" title="Cliquer sur la carte">📍</button>
+        </div>
+
+        <!-- End -->
+        <div class="route-point">
+          <div class="route-badge b">B</div>
+          <span class="route-coord" id="end-coord">Non défini</span>
+          <button class="btn route-pick-btn" id="btn-set-end" title="Cliquer sur la carte">📍</button>
+        </div>
+
+        <!-- Options -->
+        <div style="margin: 12px 0 10px;">
+          <label class="checkbox-row">
+            <input type="checkbox" id="avoid-cams" checked>
+            <span>Éviter les champs de vision</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="show-comparison">
+            <span>Afficher aussi la route directe</span>
+          </label>
+        </div>
+
+        <button class="btn" id="route-btn">▶ CALCULER L'ITINÉRAIRE</button>
+        <button class="btn danger" id="route-clear-btn" style="display:none;">✕ EFFACER</button>
+
+        <!-- Results -->
+        <div id="route-result" style="display:none;" class="route-result">
+          <div class="route-result-row">
+            <div class="route-dot green"></div>
+            <div>
+              <div class="route-result-label" id="route-label-safe">ROUTE SÛRE</div>
+              <div class="route-result-value">
+                <span id="route-dist-safe">—</span> · <span id="route-time-safe">—</span>
+              </div>
+            </div>
+          </div>
+          <div class="route-result-row" id="direct-route-row" style="display:none;">
+            <div class="route-dot amber"></div>
+            <div>
+              <div class="route-result-label">ROUTE DIRECTE</div>
+              <div class="route-result-value">
+                <span id="route-dist-direct">—</span> · <span id="route-time-direct">—</span>
+              </div>
+            </div>
+          </div>
+          <div class="route-cams-info" id="route-cams-count"></div>
+
+          <!-- Avertissement zones réduites (ORS 2010 retry) -->
+          <div id="route-relaxed-warn" style="display:none;margin-top:6px;padding:5px 8px;border-left:3px solid #ffb300;background:rgba(255,179,0,0.08);font-size:10px;color:#ffb300;letter-spacing:.5px;">
+            ⚠ ZONES RÉDUITES — trajet impossible avec portée standard, zones d'exclusion réduites de moitié.
+          </div>
+
+          <!-- Score d'exposition -->
+          <div class="exposure-section" id="exposure-section" style="display:none;">
+            <div style="font-size:9px;letter-spacing:2px;color:var(--text-dim);margin-bottom:3px;">// EXPOSITION AUX CAMÉRAS</div>
+            <div class="exposure-row">
+              <div style="flex:1;">
+                <div class="exposure-bar-wrap">
+                  <div class="exposure-bar-fill" id="exposure-fill" style="width:0%;background:var(--green);"></div>
+                </div>
+              </div>
+              <span class="exposure-pct" id="exposure-pct" style="color:var(--green);">0%</span>
+            </div>
+            <div class="exposure-stats">
+              <span id="exposure-detail">—</span>
+              <span id="exposure-verdict" style="font-weight:600;"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ORS est configuré côté serveur via ORS_API_KEY dans .env -->
+      </div>
+    </div>
+
+    <!-- ═══ CAMERAS TAB ═══ -->
+    <div class="tab-content" id="content-cams" style="display:none;">
+      <!-- STATS -->
+      <div class="panel">
+        <div class="panel-title">// ANALYSE RÉSEAU</div>
+        <div class="stats">
+          <div class="stat-box"><span class="stat-number" id="stat-total">—</span><span class="stat-label">CAMÉRAS</span></div>
+          <div class="stat-box"><span class="stat-number red" id="stat-cones">—</span><span class="stat-label">AVEC CÔNE</span></div>
+          <div class="stat-box"><span class="stat-number amber" id="stat-ptz">—</span><span class="stat-label">PTZ / 360°</span></div>
+          <div class="stat-box"><span class="stat-number" id="stat-user">0</span><span class="stat-label">AJOUTÉES</span></div>
+        </div>
+      </div>
+
+      <!-- LEGEND -->
+      <div class="panel">
+        <div class="panel-title">// LÉGENDE</div>
+
+        <div style="font-size:9px;color:var(--text-dim);letter-spacing:2px;margin-bottom:8px;">ZONES DE VISION</div>
+        <div class="legend-item">
+          <div class="legend-swatch" style="background:rgba(255,40,40,0.24);border:1px solid rgba(255,40,40,0.68);"></div>
+          <span>Zone réduite <span style="color:var(--text-dim);font-size:10px;">(portée min)</span></span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-swatch" style="background:rgba(255,165,0,0.14);border:1px solid rgba(255,165,0,0.48);"></div>
+          <span>Zone standard</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-swatch" style="background:rgba(50,210,50,0.07);border:1px dashed rgba(50,210,50,0.28);"></div>
+          <span>Zone étendue <span style="color:var(--text-dim);font-size:10px;">(portée max)</span></span>
+        </div>
+
+        <div style="font-size:9px;color:var(--text-dim);letter-spacing:2px;margin:8px 0 8px;border-top:1px solid var(--border);padding-top:8px;">MARQUEURS</div>
+        <div class="legend-item">
+          <div style="width:28px;height:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <div style="width:8px;height:8px;background:#ff3131;border-radius:50%;border:1px solid rgba(255,255,255,0.35);box-shadow:0 0 4px #ff3131;"></div>
+          </div>
+          <span>Caméra fixe (OSM)</span>
+        </div>
+        <div class="legend-item">
+          <div style="width:28px;height:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <div style="width:8px;height:8px;background:#ff8c00;border-radius:50%;border:1px solid rgba(255,255,255,0.35);box-shadow:0 0 4px #ff8c00;"></div>
+          </div>
+          <span>PTZ / Dôme</span>
+        </div>
+        <div class="legend-item">
+          <div style="width:28px;height:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <div style="width:8px;height:8px;background:#ffb300;border-radius:50%;border:1px solid rgba(255,255,255,0.35);box-shadow:0 0 4px #ffb300;"></div>
+          </div>
+          <span>Communautaire</span>
+        </div>
+
+        <div style="font-size:9px;color:var(--text-dim);letter-spacing:2px;margin:8px 0 8px;border-top:1px solid var(--border);padding-top:8px;">ITINÉRAIRE</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:rgba(0,255,65,0.9);border:1px solid rgba(0,255,65,1);"></div><span>Route sûre</span></div>
+        <div class="legend-item"><div class="legend-swatch" style="background:rgba(255,179,0,0.6);border:1px dashed rgba(255,179,0,0.8);"></div><span>Route directe (comparaison)</span></div>
+      </div>
+
+      <!-- ADD CAMERA -->
+      <div class="panel">
+        <div class="panel-title">// AJOUTER UNE CAMÉRA</div>
+        <div class="form-group">
+          <label>TYPE</label>
+          <select id="cam-type">
+            <option value="fixed">Fixe (directionnelle)</option>
+            <option value="ptz">PTZ / Dôme 360°</option>
+            <option value="unknown">Inconnue</option>
+          </select>
+        </div>
+        <div id="direction-group" class="form-group">
+          <label>DIRECTION & FOV</label>
+          <div class="compass-wrap">
+            <div class="compass" id="compass" title="Cliquer pour définir la direction">
+              <div class="compass-needle" id="compass-needle"></div>
+              <div class="compass-center"></div>
+            </div>
+            <div style="flex:1;">
+              <div class="input-row">
+                <div><label>AZIMUT °</label><input type="number" id="cam-direction" value="0" min="0" max="359"></div>
+                <div><label>FOV °</label><input type="number" id="cam-fov" value="70" min="10" max="180"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>PORTÉE (mètres)</label>
+          <input type="number" id="cam-range" value="30" min="5" max="200">
+        </div>
+        <div class="form-group">
+          <label>NOTE (optionnel)</label>
+          <input type="text" id="cam-note" placeholder="ex: caméra de commerce...">
+        </div>
+        <button class="btn" id="btn-add-mode">⊕ PLACER SUR LA CARTE</button>
+        <button class="btn secondary" id="btn-cancel" style="display:none;">✕ ANNULER</button>
+      </div>
+
+      <!-- CAMERA LIST -->
+      <div class="panel-title" style="padding:10px 16px 6px;flex-shrink:0;">// INVENTAIRE</div>
+      <div class="camera-list" id="camera-list"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>

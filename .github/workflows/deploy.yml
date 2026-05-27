@@ -1,0 +1,102 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            rust:
+              - 'src/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'migrations/**'
+            frontend:
+              - 'public/**'
+
+      - name: Cache Cargo
+        if: steps.filter.outputs.rust == 'true'
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Rust
+        if: steps.filter.outputs.rust == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl tools
+        if: steps.filter.outputs.rust == 'true'
+        run: sudo apt-get install -y musl-tools
+
+      - name: Build release
+        if: steps.filter.outputs.rust == 'true'
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+
+      - name: Move to dist
+        if: steps.filter.outputs.rust == 'true'
+        run: |
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-musl/release/blind-spot dist/
+
+      - name: Copy binary to server
+        if: steps.filter.outputs.rust == 'true'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "dist/blind-spot"
+          target: "/opt/blind-spot/temp"
+          strip_components: 1
+          overwrite: true
+
+      - name: Copy frontend to server
+        if: steps.filter.outputs.frontend == 'true'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "public/"
+          target: "/opt/blind-spot"
+          strip_components: 0
+          overwrite: true
+
+      - name: Restart service
+        if: steps.filter.outputs.rust == 'true'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          request_pty: true
+          script: |
+            if [ -f /opt/blind-spot/temp/blind-spot ]; then
+              mv /opt/blind-spot/temp/blind-spot /opt/blind-spot/blind-spot
+              chmod +x /opt/blind-spot/blind-spot
+              sudo systemctl restart blind-spot
+              sudo systemctl is-active --quiet blind-spot && echo "✅ OK" || echo "❌ Failed"
+            else
+              echo "❌ Binary not found in temp/"
+              exit 1
+            fi
