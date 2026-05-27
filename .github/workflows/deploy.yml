@@ -27,7 +27,7 @@ jobs:
               - 'public/**'
 
       - name: Cache Cargo
-        if: steps.filter.outputs.rust == 'true'
+        if: steps.filter.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
         uses: actions/cache@v3
         with:
           path: |
@@ -41,27 +41,27 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Install Rust
-        if: steps.filter.outputs.rust == 'true'
+        if: steps.filter.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
 
       - name: Install musl tools
-        if: steps.filter.outputs.rust == 'true'
+        if: steps.filter.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
         run: sudo apt-get install -y musl-tools
 
       - name: Build release
-        if: steps.filter.outputs.rust == 'true'
+        if: steps.filter.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
         run: cargo build --release --locked --target x86_64-unknown-linux-musl
 
       - name: Move to dist
-        if: steps.filter.outputs.rust == 'true'
+        if: steps.filter.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           mkdir -p dist
           cp target/x86_64-unknown-linux-musl/release/blindspot-api dist/
 
       - name: Copy binary to server
-        if: steps.filter.outputs.rust == 'true'
+        if: steps.filter.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -73,7 +73,7 @@ jobs:
           overwrite: true
 
       - name: Copy frontend to server
-        if: steps.filter.outputs.frontend == 'true'
+        if: steps.filter.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -85,7 +85,7 @@ jobs:
           overwrite: true
 
       - name: Restart service
-        if: steps.filter.outputs.rust == 'true'
+        if: steps.filter.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
