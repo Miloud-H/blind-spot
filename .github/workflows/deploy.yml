@@ -56,7 +56,7 @@ jobs:
         if: steps.filter.outputs.rust == 'true'
         run: |
           mkdir -p dist
-          cp target/x86_64-unknown-linux-musl/release/blind-spot dist/
+          cp target/x86_64-unknown-linux-musl/release/blindspot-api dist/
 
       - name: Copy binary to server
         if: steps.filter.outputs.rust == 'true'
@@ -65,7 +65,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "dist/blind-spot"
+          source: "dist/blindspot-api"
           target: "/opt/blind-spot/temp"
           strip_components: 1
           overwrite: true
@@ -91,9 +91,9 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           request_pty: true
           script: |
-            if [ -f /opt/blind-spot/temp/blind-spot ]; then
-              mv /opt/blind-spot/temp/blind-spot /opt/blind-spot/blind-spot
-              chmod +x /opt/blind-spot/blind-spot
+            if [ -f /opt/blind-spot/temp/blindspot-api ]; then
+              mv /opt/blind-spot/temp/blindspot-api /opt/blind-spot/blindspot-api
+              chmod +x /opt/blind-spot/blindspot-api
               sudo systemctl restart blind-spot
               sudo systemctl is-active --quiet blind-spot && echo "✅ OK" || echo "❌ Failed"
             else
