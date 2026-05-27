@@ -3,6 +3,7 @@ name: Build and Deploy
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:  # permet de déclencher manuellement depuis GitHub
 
 jobs:
   build-and-deploy:
@@ -21,6 +22,7 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'migrations/**'
+              - '.github/workflows/**'
             frontend:
               - 'public/**'
 
