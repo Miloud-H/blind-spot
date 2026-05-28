@@ -704,6 +704,9 @@ function clearRoute() {
   document.getElementById('route-clear-btn').style.display = 'none';
   document.getElementById('route-bar').style.display = 'none';
   document.getElementById('exposure-section').style.display = 'none';
+  const gpxBtn = document.getElementById('btn-gpx');
+  if (gpxBtn.href.startsWith('blob:')) URL.revokeObjectURL(gpxBtn.href);
+  gpxBtn.href = '#';
   document.getElementById('nav-apps').style.display = 'none';
   map.getContainer().style.cursor = '';
   modeBadge.classList.remove('active');
@@ -805,18 +808,21 @@ async function calculateRoute() {
     document.getElementById('route-result').style.display = 'block';
     document.getElementById('route-clear-btn').style.display = 'block';
 
-    // Liens vers apps de navigation
-    const sLat = routeStart.lat, sLng = routeStart.lng;
-    const eLat = routeEnd.lat,   eLng = routeEnd.lng;
-    document.getElementById('nav-google').href =
-      `https://www.google.com/maps/dir/?api=1&origin=${sLat},${sLng}&destination=${eLat},${eLng}&travelmode=walking`;
-    document.getElementById('nav-waze').href =
-      `https://waze.com/ul?ll=${eLat},${eLng}&navigate=yes&zoom=17`;
-    const appleBtn = document.getElementById('nav-apple');
-    if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
-      appleBtn.href = `maps://?saddr=${sLat},${sLng}&daddr=${eLat},${eLng}&dirflg=w`;
-      appleBtn.style.display = 'block';
-    }
+    // Génération GPX depuis les coordonnées ORS [lng, lat]
+    const trkpts = data.route.coordinates
+      .map(([lo, la]) => `      <trkpt lat="${la.toFixed(6)}" lon="${lo.toFixed(6)}"></trkpt>`)
+      .join('\n');
+    const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="BlindSpot MTL" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>BlindSpot Route</name>
+    <trkseg>
+${trkpts}
+    </trkseg>
+  </trk>
+</gpx>`;
+    const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+    document.getElementById('btn-gpx').href = URL.createObjectURL(blob);
     document.getElementById('nav-apps').style.display = 'block';
 
     openMobilePanel(); // afficher les résultats sur mobile

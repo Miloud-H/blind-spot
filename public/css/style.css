@@ -309,15 +309,6 @@ select option { background: var(--surface2); }
 .preset-btn.active.standard    { color: var(--amber); border-bottom: 2px solid var(--amber); }
 .preset-btn.active.high        { color: var(--green); border-bottom: 2px solid var(--green); }
 
-/* ── NAVIGATION APPS ─────────────────────────────────────────────────────────── */
-.nav-app-btn {
-  flex: 1; text-align: center; text-decoration: none;
-  background: transparent; border: 1px solid var(--border);
-  color: var(--text-dim); font-family: 'Oxanium', sans-serif;
-  font-size: 10px; letter-spacing: 2px; padding: 9px 6px;
-  cursor: pointer; transition: all 0.2s; text-transform: uppercase;
-}
-.nav-app-btn:hover { border-color: var(--cyan); color: var(--cyan); background: rgba(0,184,212,0.08); }
 
 /* ── MOBILE ─────────────────────────────────────────────────────────────────── */
 /* Handle de drag (masqué sur desktop) */
@@ -380,6 +371,12 @@ select option { background: var(--surface2); }
   .tab-content { overflow-y: auto; }
   #content-cams { overflow-y: auto; }
   .camera-list  { overflow-y: visible; } /* le parent scroll déjà */
+
+  /* Espace en bas pour que le dernier élément ne soit pas coupé */
+  #content-route .panel,
+  #content-cams {
+    padding-bottom: max(24px, env(safe-area-inset-bottom, 24px));
+  }
 
   /* Boutons plus grands (touch target ≥ 44px) */
   .btn { padding: 12px; min-height: 44px; }
