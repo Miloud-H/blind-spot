@@ -309,6 +309,9 @@ select option { background: var(--surface2); }
 .preset-btn.active.standard    { color: var(--amber); border-bottom: 2px solid var(--amber); }
 .preset-btn.active.high        { color: var(--green); border-bottom: 2px solid var(--green); }
 
+/* Preset dans le panel : masqué sur desktop (le flottant suffit) */
+.preset-in-panel { display: none; }
+
 
 /* ── MOBILE ─────────────────────────────────────────────────────────────────── */
 /* Handle de drag (masqué sur desktop) */
@@ -381,15 +384,13 @@ select option { background: var(--surface2); }
   /* Boutons plus grands (touch target ≥ 44px) */
   .btn { padding: 12px; min-height: 44px; }
 
-  /* Contrôles flottants : remonter au-dessus du panel */
-  .preset-control {
-    top: auto;
-    bottom: 56px;
-    right: 10px;
-    left: 10px;
-    justify-content: center;
-  }
-  .preset-label { display: none; }
+  /* Preset flottant masqué sur mobile — remplacé par la version dans le panel */
+  .preset-control { display: none; }
+
+  /* Preset dans le panel visible sur mobile */
+  .preset-in-panel { display: block; margin-top: 10px; }
+  .preset-in-panel .preset-btn { flex: 1; border-left: none; }
+  .preset-in-panel .preset-btn:first-child { border-left: 1px solid var(--border); }
 
   .geoloc-btn {
     bottom: 106px;

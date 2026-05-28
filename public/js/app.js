@@ -356,8 +356,9 @@ function rerenderCameras() {
 function setPreset(name) {
   rangePreset = name;
   ['conservative', 'standard', 'high'].forEach(p => {
-    const btn = document.getElementById(`preset-${p}`);
-    btn.classList.toggle('active', p === name);
+    const active = p === name;
+    document.getElementById(`preset-${p}`)?.classList.toggle('active', active);
+    document.getElementById(`preset-${p}-p`)?.classList.toggle('active', active);
   });
   // Le rendu affiche toujours les 3 zones simultanément.
   // Ce preset contrôle uniquement l'agressivité de l'évitement au routing.

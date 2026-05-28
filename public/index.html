@@ -96,6 +96,16 @@
             <input type="checkbox" id="show-comparison">
             <span>Afficher aussi la route directe</span>
           </label>
+
+          <!-- Zone d'évitement (visible uniquement sur mobile — sur desktop c'est le contrôle flottant) -->
+          <div class="preset-in-panel">
+            <label style="display:block;margin-bottom:5px;">ZONE D'ÉVITEMENT</label>
+            <div style="display:flex;">
+              <button class="preset-btn conservative" id="preset-conservative-p" onclick="setPreset('conservative')">RÉDUIT</button>
+              <button class="preset-btn standard active" id="preset-standard-p" onclick="setPreset('standard')">STANDARD</button>
+              <button class="preset-btn high" id="preset-high-p" onclick="setPreset('high')">MAXIMAL</button>
+            </div>
+          </div>
         </div>
 
         <button class="btn" id="route-btn">▶ CALCULER L'ITINÉRAIRE</button>
