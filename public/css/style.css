@@ -229,6 +229,9 @@ select option { background: var(--surface2); }
 }
 .geoloc-btn:hover { background: var(--green-faint); border-color: var(--cyan); box-shadow: 0 0 14px rgba(0,184,212,0.3); }
 .geoloc-btn.locating { border-color: var(--cyan); animation: pulse 1s infinite; }
+.geoloc-btn.geo-follow { background: rgba(0,184,212,0.18); border-color: var(--cyan); box-shadow: 0 0 14px rgba(0,184,212,0.5); animation: geo-pulse 2s ease-in-out infinite; }
+.geoloc-btn.geo-nofollow { background: rgba(0,184,212,0.08); border-color: rgba(0,184,212,0.45); box-shadow: 0 0 6px rgba(0,184,212,0.2); }
+@keyframes geo-pulse { 0%,100% { box-shadow: 0 0 8px rgba(0,184,212,0.4); } 50% { box-shadow: 0 0 20px rgba(0,184,212,0.8); } }
 
 /* EXPOSURE SCORE */
 .exposure-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }

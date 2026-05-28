@@ -562,43 +562,96 @@ async function persistCamera(cam) {
   }
 }
 
-// ─── GÉOLOCALISATION ─────────────────────────────────────────
+// ─── GÉOLOCALISATION (suivi continu) ─────────────────────────
 let userLocCircle = null, userLocDot = null;
+let geoWatchId = null;   // null = off
+let geoFollow  = false;  // true = carte suit la position
+
+function _updateGeoMarkers(lat, lng, accuracy) {
+  if (userLocCircle) { map.removeLayer(userLocCircle); map.removeLayer(userLocDot); }
+  userLocCircle = L.circle([lat, lng], {
+    radius: accuracy, color: '#00b8d4', fillColor: '#00b8d4',
+    fillOpacity: 0.1, weight: 1.5, dashArray: '4,4'
+  }).addTo(map);
+  userLocDot = L.circleMarker([lat, lng], {
+    radius: 7, color: '#fff', fillColor: '#00b8d4',
+    fillOpacity: 1, weight: 2
+  }).addTo(map);
+  userLocCircle.bindPopup(
+    `<div class="popup-title">📍 Votre position</div>` +
+    `<div class="popup-row">Précision: <span>±${Math.round(accuracy)} m</span></div>`
+  );
+  userLocDot.on('click', () => userLocCircle.openPopup());
+}
+
+function _geoSetBtn(state) {
+  // state: 'off' | 'locating' | 'follow' | 'nofollow'
+  const btn = document.getElementById('geoloc-btn');
+  btn.classList.remove('locating', 'geo-follow', 'geo-nofollow');
+  if (state === 'locating') btn.classList.add('locating');
+  else if (state === 'follow')   btn.classList.add('geo-follow');
+  else if (state === 'nofollow') btn.classList.add('geo-nofollow');
+}
+
+function _stopGeoWatch() {
+  if (geoWatchId !== null) {
+    navigator.geolocation.clearWatch(geoWatchId);
+    geoWatchId = null;
+  }
+  geoFollow = false;
+  _geoSetBtn('off');
+  if (userLocCircle) { map.removeLayer(userLocCircle); userLocCircle = null; }
+  if (userLocDot)    { map.removeLayer(userLocDot);    userLocDot    = null; }
+}
 
 function locateUser() {
   if (!navigator.geolocation) { showToast('⚠ Géolocalisation non supportée'); return; }
-  const btn = document.getElementById('geoloc-btn');
-  btn.classList.add('locating');
-  showToast('◎ Localisation en cours…');
 
-  navigator.geolocation.getCurrentPosition(
-    ({ coords: { latitude: lat, longitude: lng, accuracy } }) => {
-      btn.classList.remove('locating');
-      map.setView([lat, lng], 17, { animate: true });
-      if (userLocCircle) { map.removeLayer(userLocCircle); map.removeLayer(userLocDot); }
-      userLocCircle = L.circle([lat, lng], {
-        radius: accuracy, color: '#00b8d4', fillColor: '#00b8d4',
-        fillOpacity: 0.1, weight: 1.5, dashArray: '4,4'
-      }).addTo(map);
-      userLocDot = L.circleMarker([lat, lng], {
-        radius: 6, color: '#fff', fillColor: '#00b8d4',
-        fillOpacity: 1, weight: 2
-      }).addTo(map);
-      userLocCircle.bindPopup(
-        `<div class="popup-title">📍 Votre position</div>` +
-        `<div class="popup-row">Précision: <span>±${Math.round(accuracy)} m</span></div>`
-      );
-      userLocDot.on('click', () => userLocCircle.openPopup());
-      showToast(`✓ Position trouvée (±${Math.round(accuracy)} m)`);
-    },
-    (err) => {
-      btn.classList.remove('locating');
-      const msgs = { 1: 'Permission refusée', 2: 'Position indisponible', 3: 'Délai dépassé' };
-      showToast(`⚠ Géoloc : ${msgs[err.code] || err.message}`);
-    },
-    { timeout: 12000, enableHighAccuracy: true }
-  );
+  // Clic bouton : off→follow, follow→off, nofollow→follow (recentrer)
+  if (geoWatchId === null) {
+    // Démarrer le suivi
+    _geoSetBtn('locating');
+    showToast('◎ Localisation en cours…');
+
+    geoWatchId = navigator.geolocation.watchPosition(
+      ({ coords: { latitude: lat, longitude: lng, accuracy } }) => {
+        const first = !userLocDot;
+        _updateGeoMarkers(lat, lng, accuracy);
+        if (first) {
+          _geoSetBtn('follow');
+          geoFollow = true;
+          map.setView([lat, lng], 17, { animate: true });
+          showToast(`✓ Suivi GPS actif (±${Math.round(accuracy)} m)`);
+        } else if (geoFollow) {
+          map.panTo([lat, lng], { animate: true, duration: 0.5 });
+        }
+      },
+      (err) => {
+        _stopGeoWatch();
+        const msgs = { 1: 'Permission refusée', 2: 'Position indisponible', 3: 'Délai dépassé' };
+        showToast(`⚠ Géoloc : ${msgs[err.code] || err.message}`);
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
+  } else if (geoFollow) {
+    // Arrêter complètement
+    _stopGeoWatch();
+    showToast('✕ Suivi GPS arrêté');
+  } else {
+    // Reprendre le centrage
+    geoFollow = true;
+    _geoSetBtn('follow');
+    if (userLocDot) map.setView(userLocDot.getLatLng(), map.getZoom(), { animate: true });
+  }
 }
+
+// Pause du suivi de carte quand l'utilisateur fait glisser
+map.on('dragstart', () => {
+  if (geoWatchId !== null && geoFollow) {
+    geoFollow = false;
+    _geoSetBtn('nofollow');
+  }
+});
 
 // ─── ROUTING (via backend /api/route) ───────────────────────
 // Le frontend délègue tout au backend Rust qui appelle ORS.
