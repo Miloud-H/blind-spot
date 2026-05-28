@@ -376,6 +376,11 @@ select option { background: var(--surface2); }
   .tabs { cursor: pointer; }
   .tab  { padding: 12px 6px; font-size: 11px; }
 
+  /* Contenu des onglets scrollable sur mobile */
+  .tab-content { overflow-y: auto; }
+  #content-cams { overflow-y: auto; }
+  .camera-list  { overflow-y: visible; } /* le parent scroll déjà */
+
   /* Boutons plus grands (touch target ≥ 44px) */
   .btn { padding: 12px; min-height: 44px; }
 
