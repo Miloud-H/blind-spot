@@ -129,7 +129,14 @@ pub async fn calculate(
         );
     }
 
-    // ── 8. Route sûre — avec retry automatique si ORS 2010 ───────────────────
+    // ── 8. Marge de sécurité ORS ─────────────────────────────────────────────
+    // Les polygones sont agrandis de 15 % avant envoi à ORS pour compenser la
+    // discrétisation (cônes en 10 étapes ≠ arc parfait). L'affichage et le score
+    // d'exposition utilisent les rings originaux — seul ORS reçoit la version élargie.
+    const ORS_MARGIN: f64 = 1.15;
+    let rings_ors = geo::add_ors_safety_margin(rings.clone(), ORS_MARGIN);
+
+    // ── 9. Route sûre — avec retry automatique si ORS 2010 ───────────────────
     // ORS 2010 = "Route could not be found" (zone trop contrainte).
     // Retry avec portée ×0.5 : zones d'exclusion réduites, chemin plus facile à trouver.
     let (safe_resp, relaxed) = {
@@ -138,7 +145,7 @@ pub async fn calculate(
             &state.config.ors_api_key,
             req.start,
             req.end,
-            &rings,
+            &rings_ors,
         )
         .await
         {
@@ -150,14 +157,14 @@ pub async fn calculate(
                         "ORS 2010 sur {} rings — retry avec preset×0.5",
                         rings.len()
                     );
-                    // Recalculer les rings avec portée réduite
+                    // Recalculer les rings avec portée réduite + marge
                     let rings_half = {
                         let raw = geo::cameras_to_ors_rings(&cameras, preset_mult * 0.5);
                         let merged = geo::merge_overlapping_rings(raw);
                         let (filtered, _) = geo::filter_rings_containing_endpoints(
                             merged, start_pt, end_pt,
                         );
-                        filtered
+                        geo::add_ors_safety_margin(filtered, ORS_MARGIN)
                     };
                     let r2 = ors::get_route(
                         &state.http_client,

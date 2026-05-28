@@ -287,6 +287,27 @@ pub fn merge_overlapping_rings(rings: Vec<Vec<[f64; 2]>>) -> Vec<Vec<[f64; 2]>> 
         .collect()
 }
 
+// ── Marge de sécurité ORS ────────────────────────────────────────────────────
+
+/// Agrandit un ring GeoJSON autour de son centroïde par un facteur `factor`.
+///
+/// Utilisé pour créer une marge entre la zone réelle de la caméra et le polygon
+/// envoyé à ORS : ORS route clairement à l'extérieur, ce qui évite qu'il passe
+/// au bord du polygon (qui est légèrement aplati à cause de la discrétisation).
+///
+/// L'affichage visuel et le score d'exposition utilisent toujours les rings originaux.
+pub fn add_ors_safety_margin(rings: Vec<Vec<[f64; 2]>>, factor: f64) -> Vec<Vec<[f64; 2]>> {
+    rings.into_iter().map(|ring| {
+        if ring.len() < 2 { return ring; }
+        let n = ring.len() as f64;
+        let cx = ring.iter().map(|p| p[0]).sum::<f64>() / n;
+        let cy = ring.iter().map(|p| p[1]).sum::<f64>() / n;
+        ring.iter().map(|&[x, y]| {
+            [cx + (x - cx) * factor, cy + (y - cy) * factor]
+        }).collect()
+    }).collect()
+}
+
 // ── Point-in-polygon ─────────────────────────────────────────────────────────
 
 /// Teste si le point (px, py) est à l'intérieur d'un ring GeoJSON fermé [[x,y]…].
