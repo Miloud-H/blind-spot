@@ -62,7 +62,7 @@ pub struct LatLng {
 
 // ── Réponses HTTP ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RouteResponse {
     /// GeoJSON LineString de la route sûre
     pub route: serde_json::Value,
@@ -79,7 +79,7 @@ pub struct RouteResponse {
     pub direct_route: Option<DirectRoute>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DirectRoute {
     pub route: serde_json::Value,
     pub distance_km: f64,

@@ -13,6 +13,7 @@ mod error;
 mod geo;
 mod handlers;
 mod models;
+mod route_cache;
 mod services;
 
 pub use error::AppError;
@@ -22,9 +23,10 @@ pub type AppResult<T> = Result<T, AppError>;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: SqlitePool,
+    pub pool:        SqlitePool,
     pub http_client: reqwest::Client,
-    pub config: Config,
+    pub config:      Config,
+    pub route_cache: route_cache::RouteCache,
 }
 
 #[derive(Clone)]
@@ -128,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
         pool,
         http_client,
         config,
+        route_cache: route_cache::RouteCache::new(),
     };
 
     // CORS — permissif pour le prototype (à restreindre en prod)

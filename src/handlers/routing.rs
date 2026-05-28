@@ -3,6 +3,7 @@ use crate::{
     db, geo,
     error::AppError,
     models::{DirectRoute, RouteRequest, RouteResponse},
+    route_cache::RouteCache,
     services::ors,
     AppState,
 };
@@ -28,6 +29,13 @@ pub async fn calculate(
         return Err(AppError::BadRequest(
             "ORS_API_KEY non configurée — ajouter dans .env".into(),
         ));
+    }
+
+    // ── Cache hit ────────────────────────────────────────────────────────────
+    let cache_key = RouteCache::key(&req);
+    if let Some(cached) = state.route_cache.get(&cache_key).await {
+        tracing::debug!("Cache HIT ({} entrées)", state.route_cache.len().await);
+        return Ok(Json(cached));
     }
 
     let avoid_cams = req.avoid_cams.unwrap_or(true);
@@ -247,7 +255,7 @@ pub async fn calculate(
         None
     };
 
-    Ok(Json(RouteResponse {
+    let response = RouteResponse {
         route: serde_json::json!({
             "type": "LineString",
             "coordinates": safe_feature.geometry.coordinates
@@ -258,7 +266,13 @@ pub async fn calculate(
         relaxed,
         segments,
         direct_route,
-    }))
+    };
+
+    // ── Cache store ──────────────────────────────────────────────────────────
+    state.route_cache.insert(cache_key, response.clone()).await;
+    tracing::debug!("Cache MISS → stocké ({} entrées)", state.route_cache.len().await);
+
+    Ok(Json(response))
 }
 
 fn validate_latlng(lat: f64, lng: f64) -> Result<(), AppError> {
