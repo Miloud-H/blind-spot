@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="72" fill="#050a06"/>
+  <rect x="32" y="32" width="448" height="448" rx="56" fill="none" stroke="#00ff41" stroke-width="6" stroke-opacity="0.3"/>
+  <!-- Camera body -->
+  <rect x="100" y="180" width="220" height="140" rx="18" fill="none" stroke="#00ff41" stroke-width="14"/>
+  <!-- Lens -->
+  <circle cx="260" cy="250" r="44" fill="none" stroke="#00ff41" stroke-width="12"/>
+  <circle cx="260" cy="250" r="20" fill="#00ff41" fill-opacity="0.3"/>
+  <!-- Viewfinder bump -->
+  <rect x="320" y="205" width="90" height="50" rx="10" fill="none" stroke="#00ff41" stroke-width="10"/>
+  <!-- Strike-through slash -->
+  <line x1="110" y1="140" x2="400" y2="370" stroke="#ff3131" stroke-width="18" stroke-linecap="round"/>
+  <!-- Label -->
+  <text x="256" y="430" font-family="monospace" font-size="52" font-weight="bold"
+        text-anchor="middle" fill="#00ff41" letter-spacing="6">BLIND</text>
+</svg>

@@ -368,6 +368,7 @@ function setPreset(name) {
     high:         'Évitement maximal — zones étendues'
   };
   showToast(`◎ ${labels[name]}`);
+  updateRouteHash();
 }
 
 // ─── CHARGEMENT CAMÉRAS (depuis le backend, par viewport) ────
@@ -653,6 +654,46 @@ map.on('dragstart', () => {
   }
 });
 
+// ─── URL SHARING ────────────────────────────────────────────
+function updateRouteHash() {
+  const parts = [];
+  if (routeStart) parts.push(`s=${routeStart.lat.toFixed(5)},${routeStart.lng.toFixed(5)}`);
+  if (routeEnd)   parts.push(`e=${routeEnd.lat.toFixed(5)},${routeEnd.lng.toFixed(5)}`);
+  if (rangePreset !== 'standard') parts.push(`p=${rangePreset}`);
+  history.replaceState(null, '', parts.length ? '#' + parts.join('&') : location.pathname + location.search);
+}
+
+function copyRouteLink() {
+  if (!routeStart && !routeEnd) { showToast('⚠ Aucun trajet à partager'); return; }
+  updateRouteHash();
+  const url = location.href;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(url).then(() => showToast('✓ Lien copié dans le presse-papier'));
+  } else {
+    const el = Object.assign(document.createElement('input'), { value: url });
+    document.body.appendChild(el); el.select(); document.execCommand('copy'); el.remove();
+    showToast('✓ Lien copié');
+  }
+}
+
+function restoreFromHash() {
+  if (!location.hash) return;
+  const params = Object.fromEntries(
+    location.hash.slice(1).split('&').map(p => p.split('=').map(decodeURIComponent))
+  );
+  let hasStart = false, hasEnd = false;
+  if (params.s) {
+    const [lat, lng] = params.s.split(',').map(Number);
+    if (!isNaN(lat) && !isNaN(lng)) { setRoutePoint('start', { lat, lng }); hasStart = true; }
+  }
+  if (params.e) {
+    const [lat, lng] = params.e.split(',').map(Number);
+    if (!isNaN(lat) && !isNaN(lng)) { setRoutePoint('end', { lat, lng }); hasEnd = true; }
+  }
+  if (params.p && ['conservative', 'standard', 'high'].includes(params.p)) setPreset(params.p);
+  if (hasStart && hasEnd) setTimeout(calculateRoute, 600);
+}
+
 // ─── ROUTING (via backend /api/route) ───────────────────────
 // Le frontend délègue tout au backend Rust qui appelle ORS.
 // Avantages : la clé ORS reste dans .env (jamais exposée au navigateur),
@@ -735,6 +776,7 @@ function setRoutePoint(type, latlng) {
   routePickMode = null;
   map.getContainer().style.cursor = '';
   modeBadge.classList.remove('active');
+  updateRouteHash();
   openMobilePanel(); // revenir au panel après avoir placé le point
   // Show route bar if at least one point is set
   document.getElementById('route-bar').style.display = (routeStart || routeEnd) ? 'flex' : 'none';
@@ -750,6 +792,7 @@ function clearRoute() {
   if (startMarker) { map.removeLayer(startMarker); startMarker = null; }
   if (endMarker) { map.removeLayer(endMarker); endMarker = null; }
   routeStart = null; routeEnd = null; routePickMode = null;
+  updateRouteHash();
   document.getElementById('start-coord').textContent = 'Non défini';
   document.getElementById('end-coord').textContent = 'Non défini';
   document.getElementById('rb-start').textContent = 'Non défini';
@@ -990,3 +1033,4 @@ map.on('zoomend', syncViewportDebounced);
 
 document.getElementById('geoloc-btn').addEventListener('click', locateUser);
 loadCameras();
+restoreFromHash();
