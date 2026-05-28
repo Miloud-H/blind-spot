@@ -681,6 +681,7 @@ function setRoutePoint(type, latlng) {
   routePickMode = null;
   map.getContainer().style.cursor = '';
   modeBadge.classList.remove('active');
+  openMobilePanel(); // revenir au panel après avoir placé le point
   // Show route bar if at least one point is set
   document.getElementById('route-bar').style.display = (routeStart || routeEnd) ? 'flex' : 'none';
 }
@@ -848,6 +849,7 @@ document.getElementById('btn-set-start').addEventListener('click', () => {
   document.getElementById('btn-set-start').classList.add('active');
   map.getContainer().style.cursor = 'crosshair';
   modeBadge.textContent = 'A DÉFINIR LE DÉPART'; modeBadge.classList.add('active');
+  closeMobilePanel();
   showToast('Cliquer sur la carte pour définir le départ (A)');
 });
 
@@ -862,6 +864,7 @@ document.getElementById('btn-set-end').addEventListener('click', () => {
   document.getElementById('btn-set-end').classList.add('active');
   map.getContainer().style.cursor = 'crosshair';
   modeBadge.textContent = 'B DÉFINIR L\'ARRIVÉE'; modeBadge.classList.add('active');
+  closeMobilePanel();
   showToast('Cliquer sur la carte pour définir l\'arrivée (B)');
 });
 
