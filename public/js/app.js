@@ -322,6 +322,22 @@ document.querySelector('.tabs').addEventListener('click', e => {
   }
 });
 
+// Swipe vertical sur le handle et les onglets
+(function setupSwipe() {
+  const targets = [document.getElementById('sidebar-handle'), document.querySelector('.tabs')];
+  targets.forEach(el => {
+    let startY = 0;
+    el.addEventListener('touchstart', e => { startY = e.touches[0].clientY; }, { passive: true });
+    el.addEventListener('touchend', e => {
+      if (!isMobile()) return;
+      const delta = startY - e.changedTouches[0].clientY; // positif = swipe vers le haut
+      if (Math.abs(delta) < 20) return; // geste trop court → ignorer
+      if (delta > 0) openMobilePanel();
+      else closeMobilePanel();
+    }, { passive: true });
+  });
+})();
+
 // ─── TABS ───────────────────────────────────────────────────
 function switchTab(name) {
   document.getElementById('tab-route').classList.toggle('active', name === 'route');
@@ -687,6 +703,7 @@ function clearRoute() {
   document.getElementById('route-clear-btn').style.display = 'none';
   document.getElementById('route-bar').style.display = 'none';
   document.getElementById('exposure-section').style.display = 'none';
+  document.getElementById('nav-apps').style.display = 'none';
   map.getContainer().style.cursor = '';
   modeBadge.classList.remove('active');
 }
@@ -786,6 +803,21 @@ async function calculateRoute() {
 
     document.getElementById('route-result').style.display = 'block';
     document.getElementById('route-clear-btn').style.display = 'block';
+
+    // Liens vers apps de navigation
+    const sLat = routeStart.lat, sLng = routeStart.lng;
+    const eLat = routeEnd.lat,   eLng = routeEnd.lng;
+    document.getElementById('nav-google').href =
+      `https://www.google.com/maps/dir/?api=1&origin=${sLat},${sLng}&destination=${eLat},${eLng}&travelmode=walking`;
+    document.getElementById('nav-waze').href =
+      `https://waze.com/ul?ll=${eLat},${eLng}&navigate=yes&zoom=17`;
+    const appleBtn = document.getElementById('nav-apple');
+    if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+      appleBtn.href = `maps://?saddr=${sLat},${sLng}&daddr=${eLat},${eLng}&dirflg=w`;
+      appleBtn.style.display = 'block';
+    }
+    document.getElementById('nav-apps').style.display = 'block';
+
     openMobilePanel(); // afficher les résultats sur mobile
 
     map.fitBounds(L.polyline(coords).getBounds(), { padding: [60, 60] });
