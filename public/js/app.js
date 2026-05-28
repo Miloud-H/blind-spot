@@ -303,12 +303,32 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2800);
 }
 
+// ─── MOBILE BOTTOM SHEET ────────────────────────────────────
+const sidebarEl = document.getElementById('sidebar');
+
+function isMobile() { return window.innerWidth <= 768; }
+
+function openMobilePanel()  { if (isMobile()) sidebarEl.classList.add('panel-open'); }
+function closeMobilePanel() { if (isMobile()) sidebarEl.classList.remove('panel-open'); }
+function toggleMobilePanel() { if (isMobile()) sidebarEl.classList.toggle('panel-open'); }
+
+document.getElementById('sidebar-handle').addEventListener('click', toggleMobilePanel);
+
+// Tap sur les onglets : ouvre le panel s'il est fermé, sinon change d'onglet normalement
+document.querySelector('.tabs').addEventListener('click', e => {
+  if (isMobile() && !sidebarEl.classList.contains('panel-open')) {
+    openMobilePanel();
+    e.stopPropagation();
+  }
+});
+
 // ─── TABS ───────────────────────────────────────────────────
 function switchTab(name) {
   document.getElementById('tab-route').classList.toggle('active', name === 'route');
   document.getElementById('tab-cams').classList.toggle('active', name === 'cams');
   document.getElementById('content-route').style.display = name === 'route' ? 'flex' : 'none';
   document.getElementById('content-cams').style.display = name === 'cams' ? 'flex' : 'none';
+  openMobilePanel();
 }
 
 // ─── PRESET HANDLERS ────────────────────────────────────────
@@ -766,6 +786,7 @@ async function calculateRoute() {
 
     document.getElementById('route-result').style.display = 'block';
     document.getElementById('route-clear-btn').style.display = 'block';
+    openMobilePanel(); // afficher les résultats sur mobile
 
     map.fitBounds(L.polyline(coords).getBounds(), { padding: [60, 60] });
     const toastMsg = avoidCams

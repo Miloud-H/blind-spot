@@ -309,6 +309,107 @@ select option { background: var(--surface2); }
 .preset-btn.active.standard    { color: var(--amber); border-bottom: 2px solid var(--amber); }
 .preset-btn.active.high        { color: var(--green); border-bottom: 2px solid var(--green); }
 
+/* ── MOBILE ─────────────────────────────────────────────────────────────────── */
+/* Handle de drag (masqué sur desktop) */
+.sidebar-handle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 0 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.sidebar-handle::before {
+  content: '';
+  display: block;
+  width: 36px;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+}
+
+@media (max-width: 768px) {
+
+  /* Header compact */
+  header { padding: 8px 14px; }
+  .logo  { font-size: 15px; letter-spacing: 3px; }
+  .status-bar { display: none; }
+
+  /* Layout vertical */
+  .main { position: relative; }
+
+  /* Map prend toute la surface */
+  #map { position: absolute; inset: 0; height: 100% !important; }
+
+  /* Sidebar = bottom sheet */
+  .sidebar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    width: 100%;
+    height: 72vh;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    transform: translateY(calc(100% - 46px)); /* seulement les onglets visibles */
+    transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+    z-index: 600;
+    box-shadow: 0 -6px 30px rgba(0, 0, 0, 0.5);
+  }
+  .sidebar.panel-open {
+    transform: translateY(0);
+  }
+
+  /* Handle visible */
+  .sidebar-handle { display: flex; }
+
+  /* Onglets : cursor pointer pour indiquer l'interaction */
+  .tabs { cursor: pointer; }
+  .tab  { padding: 12px 6px; font-size: 11px; }
+
+  /* Boutons plus grands (touch target ≥ 44px) */
+  .btn { padding: 12px; min-height: 44px; }
+
+  /* Contrôles flottants : remonter au-dessus du panel */
+  .preset-control {
+    top: auto;
+    bottom: 56px;
+    right: 10px;
+    left: 10px;
+    justify-content: center;
+  }
+  .preset-label { display: none; }
+
+  .geoloc-btn {
+    bottom: 106px;
+    left: 10px;
+    width: 42px;
+    height: 42px;
+    font-size: 18px;
+  }
+
+  .route-bar {
+    bottom: 56px;
+    min-width: 0;
+    left: 10px;
+    right: 60px;
+    transform: none;
+  }
+
+  .mode-badge {
+    top: auto;
+    bottom: 106px;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* Décaler les contrôles Leaflet */
+  .leaflet-bottom { bottom: 46px; }
+  .leaflet-top.leaflet-right { top: auto; bottom: 140px; right: 10px; }
+
+  /* Toast plus lisible */
+  .toast { width: calc(100vw - 40px); text-align: center; font-size: 11px; }
+}
+
 /* SCAN LINES */
 #map::after {
   content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
