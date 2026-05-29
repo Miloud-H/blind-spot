@@ -1,10 +1,11 @@
-const STATIC_CACHE = 'bs-static-v1';
+const STATIC_CACHE = 'bs-static-v2'; // bump → vide l'ancien cache
 const TILE_CACHE   = 'bs-tiles-v1';
 const API_CACHE    = 'bs-api-v1';
 
 const TILE_MAX = 400;
 
-const PRECACHE = ['/', '/css/style.css', '/js/app.js', '/manifest.json', '/icons/icon.svg'];
+// Seuls les ressources stables sont pré-cachées — JS/CSS ont des ?v= qui changent à chaque build
+const PRECACHE = ['/', '/manifest.json', '/icons/icon.svg'];
 
 // ── Install: pre-cache app shell ──────────────────────────────
 self.addEventListener('install', e => {
@@ -54,9 +55,10 @@ self.addEventListener('fetch', e => {
   // /api/route → never cache (too dynamic + expensive)
   if (url.pathname.startsWith('/api/')) return;
 
-  // App shell (/, .css, .js, icons, manifest) → stale-while-revalidate
+  // App shell (/, .css, .js, icons, manifest) → network-first
+  // Toujours la version fraîche si en ligne ; cache en fallback hors ligne.
   if (url.origin === self.location.origin) {
-    e.respondWith(staleWhileRevalidate(e.request, STATIC_CACHE));
+    e.respondWith(networkFirst(e.request, STATIC_CACHE));
   }
 });
 

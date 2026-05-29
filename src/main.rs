@@ -1,5 +1,6 @@
 use axum::{
-    http::{header, Method},
+    http::{header, HeaderValue, Method},
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
@@ -144,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Routeur : API en premier, puis fallback vers les fichiers statiques
     let app = Router::new()
+        .route("/", get(serve_index))
         .route("/health", get(health))
         .route(
             "/api/cameras",
@@ -167,10 +169,36 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Index HTML avec cache-busting ────────────────────────────────────────────
+// Sert index.html avec :
+//   • Cache-Control: no-cache — le browser revalide toujours (pas de cache intermédiaire)
+//   • ?v=GIT_HASH sur les assets — URL unique par build → browser recharge si changé
+
+const INDEX_HTML: &str = include_str!("../public/index.html");
+const BUILD_ID:   &str = env!("GIT_HASH");
+
+async fn serve_index() -> impl IntoResponse {
+    let html = INDEX_HTML
+        .replace(r#"href="/css/style.css""#,
+                 &format!(r#"href="/css/style.css?v={}""#, BUILD_ID))
+        .replace(r#"src="/js/app.js""#,
+                 &format!(r#"src="/js/app.js?v={}""#, BUILD_ID));
+
+    (
+        [
+            (header::CONTENT_TYPE,  HeaderValue::from_static("text/html; charset=utf-8")),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-cache, no-store, must-revalidate")),
+            (header::PRAGMA,        HeaderValue::from_static("no-cache")),
+            (header::EXPIRES,       HeaderValue::from_static("0")),
+        ],
+        html,
+    )
+}
+
 // ── Health check ─────────────────────────────────────────────────────────────
 
 async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ok", "service": "blindspot-api" }))
+    Json(serde_json::json!({ "status": "ok", "service": "blindspot-api", "build": BUILD_ID }))
 }
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
