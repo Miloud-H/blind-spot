@@ -541,37 +541,48 @@ document.getElementById('cam-type').addEventListener('change', (e) => {
 });
 
 // ─── ORIENTATION TÉLÉPHONE (compas) ─────────────────────────
-let orientActive = false;
-let orientPrefersAbsolute = false; // true dès qu'on reçoit deviceorientationabsolute
+let orientActive  = false;
+let orientGotHit  = false; // premier signal reçu
+let orientTimeout = null;
 
-function _onOrientAbsolute(e) {
-  orientPrefersAbsolute = true;
-  if (!orientActive || e.alpha === null) return;
-  setDirection((360 - e.alpha + 360) % 360);
-}
-function _onOrientRelative(e) {
-  if (!orientActive || orientPrefersAbsolute) return;
-  if (e.webkitCompassHeading != null) setDirection(e.webkitCompassHeading);
-}
-
-function _orientBtnEl() { return document.getElementById('btn-orient'); }
-function _setOrientBtnState(active) {
-  const btn = _orientBtnEl();
-  if (!btn) return;
-  if (active) {
-    btn.textContent = '🔒 COMPAS ACTIF — toucher pour verrouiller';
-    btn.classList.add('active');
-  } else {
-    btn.textContent = '📡 UTILISER LE COMPAS';
-    btn.classList.remove('active');
+function _getHeading(e) {
+  // iOS Safari : webkitCompassHeading — degrés CW depuis le nord géographique
+  if (typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0) {
+    return e.webkitCompassHeading;
   }
+  // Android Chrome : deviceorientationabsolute → e.absolute === true
+  // alpha = rotation CCW autour de Z depuis le nord → heading = 360 - alpha
+  if (e.absolute === true && typeof e.alpha === 'number' && e.alpha !== null) {
+    return (360 - e.alpha + 360) % 360;
+  }
+  return null;
+}
+
+function _onOrient(e) {
+  if (!orientActive) return;
+  const h = _getHeading(e);
+  if (h === null) return;
+  if (!orientGotHit) {
+    orientGotHit = true;
+    clearTimeout(orientTimeout);
+    showToast('◎ Compas actif — pointez vers la caméra');
+  }
+  setDirection(h);
+}
+
+function _setOrientBtnState(active) {
+  const btn = document.getElementById('btn-orient');
+  if (!btn) return;
+  btn.textContent = active ? '🔒 COMPAS ACTIF — toucher pour verrouiller' : '📡 UTILISER LE COMPAS';
+  btn.classList.toggle('active', active);
 }
 
 function stopOrientTracking() {
   if (!orientActive) return;
   orientActive = false;
-  window.removeEventListener('deviceorientationabsolute', _onOrientAbsolute, true);
-  window.removeEventListener('deviceorientation',         _onOrientRelative, true);
+  clearTimeout(orientTimeout);
+  window.removeEventListener('deviceorientationabsolute', _onOrient, true);
+  window.removeEventListener('deviceorientation',         _onOrient, true);
   _setOrientBtnState(false);
 }
 
@@ -579,7 +590,7 @@ async function startOrientTracking() {
   if (!window.DeviceOrientationEvent) {
     showToast('⚠ Boussole non disponible sur cet appareil'); return;
   }
-  // iOS 13+ exige une permission déclenchée par un geste
+  // iOS 13+ exige une permission déclenchée par un geste utilisateur
   if (typeof DeviceOrientationEvent.requestPermission === 'function') {
     try {
       const p = await DeviceOrientationEvent.requestPermission();
@@ -587,11 +598,18 @@ async function startOrientTracking() {
     } catch { showToast('⚠ Permission boussole refusée'); return; }
   }
   orientActive = true;
-  orientPrefersAbsolute = false;
-  window.addEventListener('deviceorientationabsolute', _onOrientAbsolute, true);
-  window.addEventListener('deviceorientation',         _onOrientRelative, true);
+  orientGotHit = false;
+  // Un seul handler pour les deux événements — _getHeading filtre selon le type
+  window.addEventListener('deviceorientationabsolute', _onOrient, true);
+  window.addEventListener('deviceorientation',         _onOrient, true);
   _setOrientBtnState(true);
-  showToast('◎ Compas actif — pointez vers la caméra');
+  // Si aucun signal absolu reçu après 2 s, avertir
+  orientTimeout = setTimeout(() => {
+    if (orientActive && !orientGotHit) {
+      showToast('⚠ Signal boussole absent — utilisez la roue');
+      stopOrientTracking();
+    }
+  }, 2000);
 }
 
 document.getElementById('btn-orient').addEventListener('click', () => {
