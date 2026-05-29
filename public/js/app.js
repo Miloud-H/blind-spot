@@ -508,30 +508,95 @@ btnAdd.addEventListener('click', () => {
 
 btnCancel.addEventListener('click', () => {
   addMode = false;
+  stopOrientTracking();
   map.getContainer().style.cursor = '';
   modeBadge.classList.remove('active');
   btnAdd.style.display = 'block'; btnCancel.style.display = 'none';
 });
 
 // ─── COMPASS ────────────────────────────────────────────────
-const compass = document.getElementById('compass');
-const needle = document.getElementById('compass-needle');
+const compass  = document.getElementById('compass');
+const needle   = document.getElementById('compass-needle');
 const dirInput = document.getElementById('cam-direction');
 
+function setDirection(deg) {
+  const v = ((Math.round(deg) % 360) + 360) % 360;
+  dirInput.value = v;
+  needle.style.transform = `translateX(-50%) translateY(-100%) rotate(${v}deg)`;
+}
+
 compass.addEventListener('click', (e) => {
+  stopOrientTracking();
   const rect = compass.getBoundingClientRect();
   const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-  const angle = Math.round(toDeg(Math.atan2(e.clientX - cx, -(e.clientY - cy))) + 360) % 360;
-  dirInput.value = angle;
-  needle.style.transform = `translateX(-50%) translateY(-100%) rotate(${angle}deg)`;
+  setDirection(toDeg(Math.atan2(e.clientX - cx, -(e.clientY - cy))) + 360);
 });
 dirInput.addEventListener('input', () => {
-  const v = parseFloat(dirInput.value) || 0;
-  needle.style.transform = `translateX(-50%) translateY(-100%) rotate(${v}deg)`;
+  stopOrientTracking();
+  setDirection(parseFloat(dirInput.value) || 0);
 });
 document.getElementById('cam-type').addEventListener('change', (e) => {
   document.getElementById('direction-group').style.display =
     (e.target.value === 'ptz' || e.target.value === 'unknown') ? 'none' : 'block';
+});
+
+// ─── ORIENTATION TÉLÉPHONE (compas) ─────────────────────────
+let orientActive = false;
+let orientPrefersAbsolute = false; // true dès qu'on reçoit deviceorientationabsolute
+
+function _onOrientAbsolute(e) {
+  orientPrefersAbsolute = true;
+  if (!orientActive || e.alpha === null) return;
+  setDirection((360 - e.alpha + 360) % 360);
+}
+function _onOrientRelative(e) {
+  if (!orientActive || orientPrefersAbsolute) return;
+  if (e.webkitCompassHeading != null) setDirection(e.webkitCompassHeading);
+}
+
+function _orientBtnEl() { return document.getElementById('btn-orient'); }
+function _setOrientBtnState(active) {
+  const btn = _orientBtnEl();
+  if (!btn) return;
+  if (active) {
+    btn.textContent = '🔒 COMPAS ACTIF — toucher pour verrouiller';
+    btn.classList.add('active');
+  } else {
+    btn.textContent = '📡 UTILISER LE COMPAS';
+    btn.classList.remove('active');
+  }
+}
+
+function stopOrientTracking() {
+  if (!orientActive) return;
+  orientActive = false;
+  window.removeEventListener('deviceorientationabsolute', _onOrientAbsolute, true);
+  window.removeEventListener('deviceorientation',         _onOrientRelative, true);
+  _setOrientBtnState(false);
+}
+
+async function startOrientTracking() {
+  if (!window.DeviceOrientationEvent) {
+    showToast('⚠ Boussole non disponible sur cet appareil'); return;
+  }
+  // iOS 13+ exige une permission déclenchée par un geste
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const p = await DeviceOrientationEvent.requestPermission();
+      if (p !== 'granted') { showToast('⚠ Permission boussole refusée'); return; }
+    } catch { showToast('⚠ Permission boussole refusée'); return; }
+  }
+  orientActive = true;
+  orientPrefersAbsolute = false;
+  window.addEventListener('deviceorientationabsolute', _onOrientAbsolute, true);
+  window.addEventListener('deviceorientation',         _onOrientRelative, true);
+  _setOrientBtnState(true);
+  showToast('◎ Compas actif — pointez vers la caméra');
+}
+
+document.getElementById('btn-orient').addEventListener('click', () => {
+  if (orientActive) stopOrientTracking();
+  else startOrientTracking();
 });
 
 // ─── PERSISTANCE CAMÉRAS COMMUNAUTAIRES ─────────────────────
@@ -998,6 +1063,7 @@ map.on('click', (e) => {
     persistCamera(cam); // async — fire & forget (localStorage ou backend)
     userCameraCount++; updateStats(); updateList();
     addMode = false;
+    stopOrientTracking();
     map.getContainer().style.cursor = ''; modeBadge.classList.remove('active');
     btnAdd.style.display = 'block'; btnCancel.style.display = 'none';
     document.getElementById('cam-note').value = '';
