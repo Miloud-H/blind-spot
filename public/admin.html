@@ -138,6 +138,17 @@ a.maplnk:hover{border-color:var(--bh);color:var(--text);}
 /* ── Info box ── */
 .infobox{background:var(--s2);border-left:2px solid var(--green);padding:10px 14px;font-size:11px;color:var(--dim);line-height:1.9;margin-bottom:14px;}
 .infobox span{color:var(--text);}
+
+/* ── Modal ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:500;display:flex;align-items:center;justify-content:center;}
+.modal-panel{background:var(--surface);border:1px solid var(--green);width:360px;max-width:95vw;}
+.modal-head{padding:9px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.modal-body{padding:14px;display:flex;flex-direction:column;gap:9px;}
+.field-row{display:flex;align-items:center;gap:8px;}
+.field-row label{width:96px;font-size:9px;letter-spacing:1.5px;color:var(--dim);flex-shrink:0;}
+.field-row input,.field-row select{flex:1;background:var(--s2);border:1px solid var(--border);color:var(--text);padding:5px 9px;font-family:inherit;font-size:11px;outline:none;}
+.field-row input:focus,.field-row select:focus{border-color:var(--green);}
+.modal-foot{padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;}
 </style>
 </head>
 <body>
@@ -317,6 +328,58 @@ a.maplnk:hover{border-color:var(--bh);color:var(--text);}
 
 <div class="toast" id="toast"></div>
 
+<!-- ── Modal édition caméra ── -->
+<div class="modal-overlay" id="edit-modal" style="display:none;" onclick="closeEdit(event)">
+  <div class="modal-panel" onclick="event.stopPropagation()">
+    <div class="modal-head">
+      <div class="pt">// MODIFIER CAMÉRA <span id="edit-cam-id" style="color:var(--green)"></span></div>
+      <button class="sm" onclick="closeEdit()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field-row">
+        <label>LATITUDE</label>
+        <input type="number" id="ed-lat" step="0.00001" min="-90" max="90">
+      </div>
+      <div class="field-row">
+        <label>LONGITUDE</label>
+        <input type="number" id="ed-lng" step="0.00001" min="-180" max="180">
+      </div>
+      <div class="field-row">
+        <label>DIRECTION (°)</label>
+        <input type="number" id="ed-dir" step="1" min="0" max="360" placeholder="vide = PTZ/360°">
+      </div>
+      <div class="field-row">
+        <label>FOV (°)</label>
+        <input type="number" id="ed-fov" step="1" min="1" max="360">
+      </div>
+      <div class="field-row">
+        <label>PORTÉE (m)</label>
+        <input type="number" id="ed-range" step="1" min="1">
+      </div>
+      <div class="field-row">
+        <label>TYPE</label>
+        <select id="ed-type">
+          <option value="fixed">FIXE</option>
+          <option value="ptz">PTZ / DÔME</option>
+          <option value="unknown">INCONNUE</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <label>NOM</label>
+        <input type="text" id="ed-name" placeholder="(optionnel)">
+      </div>
+      <div class="field-row">
+        <label>NOTE</label>
+        <input type="text" id="ed-note" placeholder="(optionnel)">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button onclick="submitEdit()">✓ ENREGISTRER</button>
+      <button class="danger" onclick="closeEdit()">ANNULER</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── API ──────────────────────────────────────────────────────────────────────
 const api = (path, opts = {}) => fetch(path, {
@@ -413,6 +476,62 @@ function bar(label, v, total, cls) {
   </div>`;
 }
 
+// ── Edit modal ────────────────────────────────────────────────────────────────
+const _camMap = {};
+let _editId = null;
+
+function openEdit(id) {
+  const cam = _camMap[id];
+  if (!cam) return;
+  _editId = id;
+  document.getElementById('edit-cam-id').textContent = `#${id}`;
+  document.getElementById('ed-lat').value   = cam.lat;
+  document.getElementById('ed-lng').value   = cam.lng;
+  document.getElementById('ed-dir').value   = cam.direction ?? '';
+  document.getElementById('ed-fov').value   = cam.fov ?? 70;
+  document.getElementById('ed-range').value = cam.range_m ?? 30;
+  document.getElementById('ed-type').value  = cam.cam_type ?? 'unknown';
+  document.getElementById('ed-name').value  = cam.name ?? '';
+  document.getElementById('ed-note').value  = cam.note ?? '';
+  document.getElementById('edit-modal').style.display = 'flex';
+}
+
+function closeEdit(e) {
+  if (e && e.target !== document.getElementById('edit-modal')) return;
+  document.getElementById('edit-modal').style.display = 'none';
+  _editId = null;
+}
+
+async function submitEdit() {
+  if (!_editId) return;
+  const dirStr = document.getElementById('ed-dir').value.trim();
+  const nameStr = document.getElementById('ed-name').value.trim();
+  const noteStr = document.getElementById('ed-note').value.trim();
+  const body = {
+    lat:       parseFloat(document.getElementById('ed-lat').value),
+    lng:       parseFloat(document.getElementById('ed-lng').value),
+    direction: dirStr !== '' ? parseFloat(dirStr) : null,
+    fov:       parseFloat(document.getElementById('ed-fov').value),
+    range_m:   parseFloat(document.getElementById('ed-range').value),
+    cam_type:  document.getElementById('ed-type').value,
+    name:      nameStr || null,
+    note:      noteStr || null,
+  };
+  if (isNaN(body.lat) || isNaN(body.lng)) { toast('⚠ Coordonnées invalides', true); return; }
+  const res = await api(`/api/admin/cameras/${_editId}`, {
+    method: 'PATCH', body: JSON.stringify(body),
+  });
+  if (res.ok) {
+    toast(`✓ Caméra ${_editId} mise à jour`);
+    document.getElementById('edit-modal').style.display = 'none';
+    _editId = null;
+    loadCameras(_camPage);
+  } else {
+    const d = await res.json().catch(() => ({}));
+    toast(`⚠ ${d.error || 'Erreur mise à jour'}`, true);
+  }
+}
+
 // ── Camera list ───────────────────────────────────────────────────────────────
 let _camPage = 1;
 async function loadCameras(page = 1) {
@@ -436,6 +555,7 @@ async function loadCameras(page = 1) {
   if (!d.cameras.length) {
     tb.innerHTML = `<tr><td colspan="8"><div class="empty">AUCUNE CAMÉRA</div></td></tr>`;
   } else {
+    d.cameras.forEach(c => { _camMap[c.id] = c; });
     tb.innerHTML = d.cameras.map(c => `
       <tr id="cr-${c.id}">
         <td class="td-m">${c.id}</td>
@@ -449,6 +569,7 @@ async function loadCameras(page = 1) {
         <td>
           <div style="display:flex;gap:4px;">
             <a class="maplnk" href="/?lat=${c.lat}&lng=${c.lng}&z=18&cam=${c.id}" target="_blank">🗺</a>
+            ${c.source !== 'osm' ? `<button class="sm amber" onclick="openEdit(${c.id})" title="Modifier">✎</button>` : ''}
             <button class="sm danger" onclick="deleteCamera(${c.id},'cr-${c.id}')">✕</button>
           </div>
         </td>

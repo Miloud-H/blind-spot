@@ -102,6 +102,19 @@ pub struct BulkDeleteRequest {
     pub ids: Vec<i64>,
 }
 
+/// PATCH /api/admin/cameras/:id — mise à jour d'une caméra communautaire
+#[derive(Debug, Deserialize)]
+pub struct UpdateCameraRequest {
+    pub lat:       f64,
+    pub lng:       f64,
+    pub direction: Option<f64>,
+    pub fov:       f64,
+    pub range_m:   f64,
+    pub cam_type:  String,
+    pub name:      Option<String>,
+    pub note:      Option<String>,
+}
+
 // ── Réponses HTTP ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]

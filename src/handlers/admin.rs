@@ -7,7 +7,7 @@ use axum::{
 };
 use crate::{
     error::AppError,
-    models::{AdminCamerasQuery, BulkDeleteRequest, Camera, ReportedCamera},
+    models::{AdminCamerasQuery, BulkDeleteRequest, Camera, ReportedCamera, UpdateCameraRequest},
     services::overpass,
     AppState,
 };
@@ -156,6 +156,45 @@ pub async fn delete_cameras_bulk(
 
     let affected = q.execute(&state.pool).await?.rows_affected();
     Ok(Json(serde_json::json!({ "deleted": affected })))
+}
+
+/// PATCH /api/admin/cameras/:id — déplace / modifie une caméra
+pub async fn update_camera(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<UpdateCameraRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_admin(&headers, &state.config.admin_token)?;
+
+    if !(-90.0..=90.0).contains(&body.lat) || !(-180.0..=180.0).contains(&body.lng) {
+        return Err(AppError::BadRequest("Coordonnées invalides".into()));
+    }
+    if !["fixed", "ptz", "unknown"].contains(&body.cam_type.as_str()) {
+        return Err(AppError::BadRequest("cam_type invalide".into()));
+    }
+
+    let affected = sqlx::query(
+        "UPDATE cameras SET lat=?, lng=?, direction=?, fov=?, range_m=?, cam_type=?, name=?, note=? \
+         WHERE id=?"
+    )
+    .bind(body.lat)
+    .bind(body.lng)
+    .bind(body.direction)
+    .bind(body.fov)
+    .bind(body.range_m)
+    .bind(&body.cam_type)
+    .bind(body.name.as_deref())
+    .bind(body.note.as_deref())
+    .bind(id)
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+
+    if affected == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(Json(serde_json::json!({ "updated": id })))
 }
 
 /// DELETE /api/admin/cameras/:id — supprime une caméra
