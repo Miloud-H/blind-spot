@@ -165,7 +165,7 @@ const ZONE_STYLES = {
 };
 
 function renderCamera(cam) {
-  const { lat, lng, direction, fov, type, name, source, note } = cam;
+  const { id, lat, lng, direction, fov, type, name, source, note } = cam;
   const isPTZ = type === 'ptz' || type === 'dome';
   const hasDir = direction !== null && !isPTZ;
   const isUser = source === 'user';
