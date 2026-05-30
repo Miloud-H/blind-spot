@@ -67,6 +67,9 @@ header {
 /* ── SIDEBAR ── */
 .sidebar {
   width: 300px;
+  min-width: 220px;
+  max-width: 520px;
+  position: relative;
   background: var(--surface);
   border-left: 1px solid var(--border);
   display: flex;
@@ -74,6 +77,19 @@ header {
   overflow: hidden;
   flex-shrink: 0;
 }
+
+/* Poignée de redimensionnement (desktop uniquement) */
+.sidebar-resize {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+  z-index: 20;
+  background: transparent;
+  transition: background .15s;
+}
+.sidebar-resize:hover { background: rgba(0,255,65,0.15); }
+.sidebar-resize.dragging { background: rgba(0,255,65,0.25); }
 
 /* TABS */
 .tabs { display: flex; border-bottom: 2px solid var(--border); flex-shrink: 0; }
@@ -381,6 +397,8 @@ select option { background: var(--surface2); }
 
   /* Handle visible */
   .sidebar-handle { display: flex; }
+  /* Poignée resize cachée sur mobile */
+  .sidebar-resize { display: none; }
 
   /* Onglets : cursor pointer pour indiquer l'interaction */
   .tabs { cursor: pointer; }

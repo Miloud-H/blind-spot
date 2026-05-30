@@ -1202,3 +1202,36 @@ document.getElementById('geoloc-btn').addEventListener('click', locateUser);
 loadCameras();
 renderHistory();
 restoreFromHash();
+
+// ─── SIDEBAR RESIZE (desktop) ────────────────────────────────
+(function () {
+  const sidebar = document.getElementById('sidebar');
+  const handle  = document.getElementById('sidebar-resize');
+  const KEY     = 'blindspot_sidebar_w';
+
+  // Restaurer la largeur sauvegardée
+  const saved = parseInt(localStorage.getItem(KEY));
+  if (saved && window.innerWidth > 768) sidebar.style.width = saved + 'px';
+
+  handle.addEventListener('mousedown', (e) => {
+    if (window.innerWidth <= 768) return;
+    e.preventDefault();
+    handle.classList.add('dragging');
+    const startX = e.clientX;
+    const startW = sidebar.getBoundingClientRect().width;
+
+    function onMove(e) {
+      // La sidebar est à droite : tirer vers la gauche = agrandir
+      const w = Math.min(520, Math.max(220, startW + (startX - e.clientX)));
+      sidebar.style.width = w + 'px';
+    }
+    function onUp() {
+      handle.classList.remove('dragging');
+      localStorage.setItem(KEY, parseInt(sidebar.style.width));
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
+  });
+})();
