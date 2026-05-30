@@ -1,6 +1,6 @@
 /// Calcul géométrique des cônes de surveillance (Haversine)
 /// Reproduit la logique JS du prototype côté serveur.
-use crate::models::Camera;
+use crate::models::{BuildingGeom, Camera};
 
 const EARTH_RADIUS_M: f64 = 6_371_000.0;
 
@@ -134,25 +134,116 @@ pub fn build_circle(lat: f64, lng: f64, range_m: f64, steps: usize) -> Vec<[f64;
     pts
 }
 
+// ── Viewshed (Line of Sight) ─────────────────────────────────────────────────
+
+/// Retourne t ∈ (0, 1] si le rayon A→B intersecte le segment C→D, sinon None.
+/// Coordonnées : x = lng, y = lat (cohérent avec le JS).
+fn ray_seg_t(ax: f64, ay: f64, bx: f64, by: f64,
+             cx: f64, cy: f64, dx: f64, dy: f64) -> Option<f64> {
+    let abx = bx - ax; let aby = by - ay;
+    let cdx = dx - cx; let cdy = dy - cy;
+    let den = abx * cdy - aby * cdx;
+    if den.abs() < 1e-15 { return None; }
+    let acx = cx - ax; let acy = cy - ay;
+    let t = (acx * cdy - acy * cdx) / den;
+    let u = (acx * aby - acy * abx) / den;
+    if t > 1e-9 && t <= 1.0 + 1e-9 && u >= -1e-9 && u <= 1.0 + 1e-9 {
+        Some(t.min(1.0))
+    } else {
+        None
+    }
+}
+
+/// Calcule le viewshed d'une caméra par ray-casting contre des polygones de bâtiments.
+///
+/// Retourne un ring GeoJSON `[[lng, lat], …]` fermé.
+/// Miroir exact de `computeViewshed` côté JavaScript.
+///
+/// - `direction = None`  → PTZ (360°)
+/// - `num_rays`          → résolution angulaire (120 PTZ, ≥60 fixe)
+pub fn compute_viewshed(
+    lat: f64, lng: f64,
+    range_m: f64,
+    direction: Option<f64>,
+    fov: f64,
+    num_rays: usize,
+    buildings: &[BuildingGeom],
+) -> Vec<[f64; 2]> {
+    let is_ptz = direction.is_none();
+    let a0 = direction.map(|d| d - fov / 2.0).unwrap_or(0.0);
+    let a1 = direction.map(|d| d + fov / 2.0).unwrap_or(360.0);
+    let step = (a1 - a0) / num_rays as f64;
+
+    let cos_lat = lat.to_radians().cos();
+    let m_lat: f64 = 111_320.0;
+    let m_lng = m_lat * cos_lat;
+    let cx = lng; let cy = lat;
+
+    // Bâtiments proches — filtre bbox rapide
+    let range_deg = range_m / 111_320.0 + 0.0005;
+    let near: Vec<&BuildingGeom> = buildings.iter().filter(|b| {
+        b.max_lat >= lat - range_deg && b.min_lat <= lat + range_deg &&
+        b.max_lng >= lng - range_deg && b.min_lng <= lng + range_deg
+    }).collect();
+
+    let mut pts = vec![[lng, lat]]; // GeoJSON [lng, lat]
+
+    for i in 0..=num_rays {
+        let angle_rad = (a0 + i as f64 * step).to_radians();
+        let dx = angle_rad.sin() * range_m / m_lng;
+        let dy = angle_rad.cos() * range_m / m_lat;
+        let ex = cx + dx; let ey = cy + dy;
+        let mut min_t = 1.0f64;
+
+        for b in &near {
+            // b.pts = [[lat, lng], …] → x = pts[j][1], y = pts[j][0]
+            for j in 0..b.pts.len().saturating_sub(1) {
+                let (x3, y3) = (b.pts[j][1],   b.pts[j][0]);
+                let (x4, y4) = (b.pts[j+1][1], b.pts[j+1][0]);
+                if let Some(t) = ray_seg_t(cx, cy, ex, ey, x3, y3, x4, y4) {
+                    if t < min_t { min_t = t; }
+                }
+            }
+        }
+
+        pts.push([cx + dx * min_t, cy + dy * min_t]);
+    }
+
+    if !is_ptz { pts.push([lng, lat]); } // fermer le cône
+    pts
+}
+
 /// Convertit une liste de caméras en rings GeoJSON pour `avoid_polygons` ORS.
 /// Chaque ring = Vec<[lng, lat]> fermé.
 /// `preset_mult` : multiplicateur de portée (0.5 = conservateur, 1.0 = standard, 2.2 = élevé).
-pub fn cameras_to_ors_rings(cameras: &[Camera], preset_mult: f64) -> Vec<Vec<[f64; 2]>> {
-    cameras
-        .iter()
-        .map(|cam| {
-            let range = cam.range_m * preset_mult;
-            let is_ptz = matches!(cam.cam_type.as_str(), "ptz" | "dome");
-            if is_ptz {
+/// `buildings` : slice de bâtiments pour le viewshed LOS.
+/// Si vide → fallback sur les formes simples (cercles / cônes).
+pub fn cameras_to_ors_rings(
+    cameras: &[Camera],
+    preset_mult: f64,
+    buildings: &[BuildingGeom],
+) -> Vec<Vec<[f64; 2]>> {
+    cameras.iter().map(|cam| {
+        let range = cam.range_m * preset_mult;
+        let is_ptz = matches!(cam.cam_type.as_str(), "ptz" | "dome");
+
+        if buildings.is_empty() {
+            // Pas de données bâtiments — formes simples (backward compatible)
+            return if is_ptz {
                 build_circle(cam.lat, cam.lng, range, 20)
             } else if let Some(dir) = cam.direction {
                 build_cone(cam.lat, cam.lng, dir, cam.fov, range, 10)
             } else {
-                // Caméra fixe sans direction connue → cercle réduit
                 build_circle(cam.lat, cam.lng, range * 0.5, 16)
-            }
-        })
-        .collect()
+            };
+        }
+
+        // Viewshed LOS — polygone arrêté par les bâtiments
+        let direction = if is_ptz { None } else { cam.direction };
+        let fov       = if is_ptz { 360.0 } else { cam.fov };
+        let num_rays  = if is_ptz { 120 } else { (fov as usize).max(60) };
+        compute_viewshed(cam.lat, cam.lng, range, direction, fov, num_rays, buildings)
+    }).collect()
 }
 
 // ── Fusion de polygones ───────────────────────────────────────────────────────

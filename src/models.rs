@@ -60,6 +60,20 @@ pub struct LatLng {
     pub lng: f64,
 }
 
+// ── Bâtiments (viewshed LOS) ─────────────────────────────────────────────────
+
+/// Polygone de bâtiment chargé depuis SQLite pour le ray-casting.
+/// `pts` : [[lat, lng], …] — ordre Leaflet (lat en premier).
+/// `min/max` : bbox précalculée pour le filtrage spatial rapide.
+#[derive(Debug)]
+pub struct BuildingGeom {
+    pub pts:     Vec<[f64; 2]>,
+    pub min_lat: f64,
+    pub max_lat: f64,
+    pub min_lng: f64,
+    pub max_lng: f64,
+}
+
 // ── Admin ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, sqlx::FromRow)]

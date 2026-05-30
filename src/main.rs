@@ -98,6 +98,8 @@ async fn main() -> anyhow::Result<()> {
     let days_old = db::days_since_osm_seed(&pool).await;
     let should_seed = cam_count == 0 || days_old >= 7;
 
+    let bld_count: i64 = db::count_buildings(&pool).await;
+
     if should_seed {
         if cam_count == 0 {
             tracing::info!("Base OSM vide — import initial depuis Overpass en arrière-plan…");
@@ -119,6 +121,15 @@ async fn main() -> anyhow::Result<()> {
             match services::inferred::seed_inferred_cameras(&pool_bg, &client_bg).await {
                 Ok(n)  => tracing::info!("Seed inféré terminé : {n} caméras déduites importées"),
                 Err(e) => tracing::warn!("Seed inféré échoué : {e}"),
+            }
+            // 3. Bâtiments OSM pour le viewshed LOS (seulement si table vide)
+            if bld_count == 0 {
+                match services::buildings::seed_buildings(&pool_bg, &client_bg).await {
+                    Ok(n)  => tracing::info!("Seed bâtiments terminé : {n} bâtiments insérés"),
+                    Err(e) => tracing::warn!("Seed bâtiments échoué (routage en mode simplifié) : {e}"),
+                }
+            } else {
+                tracing::info!("{bld_count} bâtiments déjà en base — seed ignoré");
             }
         });
     } else {

@@ -110,10 +110,26 @@ pub async fn calculate(
         req.range_preset.as_deref().unwrap_or("standard")
     );
 
-    // ── 5. Rings d'exclusion ORS ─────────────────────────────────────────────
-    let rings_raw = geo::cameras_to_ors_rings(&cameras, preset_mult);
+    // ── 5. Bâtiments pour le viewshed LOS ────────────────────────────────────
+    // Chargés depuis SQLite (seeded en arrière-plan au démarrage).
+    // Vide si seed pas encore terminé → fallback formes simples, transparent.
+    let buildings = if avoid_cams {
+        db::get_buildings_in_bbox(
+            &state.pool,
+            min_lat - margin, min_lng - margin,
+            max_lat + margin, max_lng + margin,
+        )
+        .await
+        .unwrap_or_default()
+    } else {
+        vec![]
+    };
+    tracing::debug!("{} bâtiments chargés pour le viewshed LOS", buildings.len());
 
-    // ── 6. Fusion des polygones qui se chevauchent ────────────────────────────
+    // ── 6. Rings d'exclusion ORS ─────────────────────────────────────────────
+    let rings_raw = geo::cameras_to_ors_rings(&cameras, preset_mult, &buildings);
+
+    // ── 7. Fusion des polygones qui se chevauchent ───────────────────────────
     // Réduit le nombre de polygones envoyés à ORS dans les zones denses.
     // Union-Find sur les bboxes + convex hull par cluster.
     let rings_before = rings_raw.len();
@@ -167,7 +183,7 @@ pub async fn calculate(
                     );
                     // Recalculer les rings avec portée réduite + marge
                     let rings_half = {
-                        let raw = geo::cameras_to_ors_rings(&cameras, preset_mult * 0.5);
+                        let raw = geo::cameras_to_ors_rings(&cameras, preset_mult * 0.5, &buildings);
                         let merged = geo::merge_overlapping_rings(raw);
                         let (filtered, _) = geo::filter_rings_containing_endpoints(
                             merged, start_pt, end_pt,
