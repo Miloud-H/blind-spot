@@ -32,6 +32,23 @@ pub async fn create(
     }
 
     let id: i64 = db::insert_camera(&state.pool, &req).await?;
+
+    let _ = state.event_bus.send(serde_json::to_string(&serde_json::json!({
+        "type": "camera_added",
+        "camera": {
+            "id":        id,
+            "lat":       req.lat,
+            "lng":       req.lng,
+            "direction": req.direction,
+            "fov":       req.fov.unwrap_or(70.0),
+            "range_m":   req.range_m.unwrap_or(30.0),
+            "cam_type":  req.cam_type.as_deref().unwrap_or("unknown"),
+            "name":      req.name,
+            "source":    "user",
+            "note":      req.note,
+        }
+    })).unwrap_or_default());
+
     Ok((
         StatusCode::CREATED,
         Json(serde_json::json!({ "id": id, "message": "Caméra ajoutée" })),

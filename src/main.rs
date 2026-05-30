@@ -1,9 +1,11 @@
 use axum::{
     http::{header, HeaderValue, Method},
+    middleware,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
+use std::sync::Arc;
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{env, str::FromStr};
 use tower_http::cors::{Any, CorsLayer};
@@ -14,6 +16,7 @@ mod error;
 mod geo;
 mod handlers;
 mod models;
+mod rate_limit;
 mod route_cache;
 mod services;
 
@@ -28,6 +31,7 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     pub config:      Config,
     pub route_cache: route_cache::RouteCache,
+    pub event_bus:   tokio::sync::broadcast::Sender<String>,
 }
 
 #[derive(Clone)]
@@ -139,12 +143,30 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Canal d'événements WebSocket (capacité 64 — les clients lents droppent des events, pas grave)
+    let (event_tx, _) = tokio::sync::broadcast::channel::<String>(64);
+
+    // Rate limiters : /api/route (10/min burst 3) et /api/cameras (60/min burst 10)
+    let route_rl   = rate_limit::new_limiter(10,  3);
+    let cameras_rl = rate_limit::new_limiter(60, 10);
+
+    // Nettoyage des entrées IP inactives toutes les 10 minutes
+    {
+        let r = route_rl.clone();
+        let c = cameras_rl.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop { tick.tick().await; r.retain_recent(); c.retain_recent(); }
+        });
+    }
+
     let config = Config { ors_api_key, admin_token, port };
     let state = AppState {
         pool,
         http_client,
         config,
         route_cache: route_cache::RouteCache::new(),
+        event_bus: event_tx,
     };
 
     // CORS — permissif pour le prototype (à restreindre en prod)
@@ -156,17 +178,32 @@ async fn main() -> anyhow::Result<()> {
     // Fichiers statiques servis depuis ./public/
     let static_files = ServeDir::new("public");
 
+    // Helper : construit un middleware de rate-limit à partir d'un limiter
+    let rl = |lim: rate_limit::KeyedLimiter| {
+        middleware::from_fn(move |req, next| {
+            let lim = Arc::clone(&lim);
+            async move { rate_limit::enforce(lim, req, next).await }
+        })
+    };
+
     // Routeur : API en premier, puis fallback vers les fichiers statiques
     let app = Router::new()
         .route("/", get(serve_index))
         .route("/admin.html", get(serve_admin))
         .route("/health", get(health))
+        .route("/api/events", get(handlers::ws::events))
         .route(
             "/api/cameras",
-            get(handlers::cameras::list).post(handlers::cameras::create),
+            get(handlers::cameras::list)
+                .post(handlers::cameras::create)
+                .layer(rl(cameras_rl.clone())),
         )
-        .route("/api/cameras/:id/report",  post(handlers::cameras::report))
-        .route("/api/route",               post(handlers::routing::calculate))
+        .route("/api/cameras/:id/report",
+            post(handlers::cameras::report)
+                .layer(rl(cameras_rl)))
+        .route("/api/route",
+            post(handlers::routing::calculate)
+                .layer(rl(route_rl)))
         .route("/api/admin/stats",         get(handlers::admin::stats))
         .route("/api/admin/reports",       get(handlers::admin::list_reports))
         .route("/api/admin/cameras",       get(handlers::admin::list_cameras)

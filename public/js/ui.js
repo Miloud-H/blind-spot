@@ -350,5 +350,6 @@ setTimeout(() => map.invalidateSize(), 100);
 document.getElementById('geoloc-btn').addEventListener('click', locateUser);
 restoreFromQuery();
 loadCameras();
+connectEventStream();
 renderHistory();
 restoreFromHash();

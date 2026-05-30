@@ -156,6 +156,14 @@ pub async fn delete_cameras_bulk(
     }
 
     let affected = q.execute(&state.pool).await?.rows_affected();
+
+    for id in &body.ids {
+        let _ = state.event_bus.send(serde_json::to_string(&serde_json::json!({
+            "type": "camera_deleted",
+            "id":   id,
+        })).unwrap_or_default());
+    }
+
     Ok(Json(serde_json::json!({ "deleted": affected })))
 }
 
@@ -195,6 +203,20 @@ pub async fn update_camera(
     if affected == 0 {
         return Err(AppError::NotFound);
     }
+
+    let _ = state.event_bus.send(serde_json::to_string(&serde_json::json!({
+        "type":      "camera_updated",
+        "id":        id,
+        "lat":       body.lat,
+        "lng":       body.lng,
+        "direction": body.direction,
+        "fov":       body.fov,
+        "range_m":   body.range_m,
+        "cam_type":  body.cam_type,
+        "name":      body.name,
+        "note":      body.note,
+    })).unwrap_or_default());
+
     Ok(Json(serde_json::json!({ "updated": id })))
 }
 
@@ -215,6 +237,12 @@ pub async fn delete_camera(
     if affected == 0 {
         return Err(AppError::NotFound);
     }
+
+    let _ = state.event_bus.send(serde_json::to_string(&serde_json::json!({
+        "type": "camera_deleted",
+        "id":   id,
+    })).unwrap_or_default());
+
     Ok((StatusCode::OK, Json(serde_json::json!({ "deleted": id }))))
 }
 

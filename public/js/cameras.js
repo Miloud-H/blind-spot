@@ -1,10 +1,31 @@
 // ─── CAMERAS — État, rendu, chargement ───────────────────────────────────────
 
-let cameras        = [];
+let cameras           = [];
 const renderedCameras = new Map();
-let userCameraCount = 0;
-let loadedBbox      = null;
-const cameraIdSet   = new Set();
+let userCameraCount   = 0;
+const cameraIdSet     = new Set();
+
+// ── Tile cache (0.01° ≈ 1 km) ──
+const TILE_DEG   = 0.01;
+const loadedTiles = new Set();
+
+function _tileKey(tx, ty)  { return `${tx},${ty}`; }
+
+function _markAndGetFetchBbox(s, w, n, e) {
+  const txMin = Math.floor(w / TILE_DEG), txMax = Math.floor(e / TILE_DEG);
+  const tyMin = Math.floor(s / TILE_DEG), tyMax = Math.floor(n / TILE_DEG);
+  const missing = [];
+  for (let ty = tyMin; ty <= tyMax; ty++)
+    for (let tx = txMin; tx <= txMax; tx++)
+      if (!loadedTiles.has(_tileKey(tx, ty))) missing.push([tx, ty]);
+  if (!missing.length) return null;
+  missing.forEach(([tx, ty]) => loadedTiles.add(_tileKey(tx, ty)));
+  const fs = Math.min(...missing.map(([, ty]) => ty))       * TILE_DEG;
+  const fw = Math.min(...missing.map(([tx])    => tx))       * TILE_DEG;
+  const fn_ = (Math.max(...missing.map(([, ty]) => ty)) + 1) * TILE_DEG;
+  const fe  = (Math.max(...missing.map(([tx])  => tx))  + 1) * TILE_DEG;
+  return [fs, fw, fn_, fe];
+}
 
 const BASE_RANGE  = { fixed: 38, ptz: 28, unknown: 20 };
 const PRESET_MULT = { conservative: 0.5, standard: 1.0, high: 2.2 };
@@ -215,12 +236,19 @@ async function loadBuildingsForBbox(s, w, n, e) {
 // ── Chargement caméras (lazy, par viewport) ──
 
 async function loadCamerasForBbox(s, w, n, e, isInitial = false) {
+  const fetchBbox = _markAndGetFetchBbox(s, w, n, e);
+  if (!fetchBbox) {
+    if (isInitial) document.getElementById('loading').style.display = 'none';
+    return;
+  }
+  const [fs, fw, fn_, fe] = fetchBbox;
+
   if (isInitial) {
     document.getElementById('dot-osm').className = 'dot loading';
     document.getElementById('status-osm').textContent = 'CHARGEMENT...';
   }
   try {
-    const res = await fetch(`/api/cameras?bbox=${s},${w},${n},${e}`, {
+    const res = await fetch(`/api/cameras?bbox=${fs},${fw},${fn_},${fe}`, {
       signal: AbortSignal.timeout(15000),
     });
     if (isInitial) document.getElementById('loading').style.display = 'none';
@@ -246,13 +274,6 @@ async function loadCamerasForBbox(s, w, n, e, isInitial = false) {
       if (c.source === 'user') userCameraCount++;
       added++;
     });
-
-    loadedBbox = {
-      s: Math.min(loadedBbox?.s ?? s, s),
-      w: Math.min(loadedBbox?.w ?? w, w),
-      n: Math.max(loadedBbox?.n ?? n, n),
-      e: Math.max(loadedBbox?.e ?? e, e),
-    };
 
     if (added > 0) { syncViewport(); updateStats(); updateList(); _tryOpenHighlight(); }
 
@@ -282,12 +303,14 @@ async function loadCameras() {
 }
 
 function viewportNeedsLoad(bounds) {
-  if (!loadedBbox) return true;
-  const tol = 0.005;
-  return (
-    bounds.getSouth() < loadedBbox.s - tol || bounds.getWest()  < loadedBbox.w - tol ||
-    bounds.getNorth() > loadedBbox.n + tol || bounds.getEast()  > loadedBbox.e + tol
-  );
+  const txMin = Math.floor(bounds.getWest()  / TILE_DEG);
+  const txMax = Math.floor(bounds.getEast()  / TILE_DEG);
+  const tyMin = Math.floor(bounds.getSouth() / TILE_DEG);
+  const tyMax = Math.floor(bounds.getNorth() / TILE_DEG);
+  for (let ty = tyMin; ty <= tyMax; ty++)
+    for (let tx = txMin; tx <= txMax; tx++)
+      if (!loadedTiles.has(_tileKey(tx, ty))) return true;
+  return false;
 }
 
 function loadDemoData() {
@@ -333,6 +356,68 @@ async function reportCamera(id) {
     if (res.ok) showToast('✓ Signalement enregistré — merci');
     else        showToast('⚠ Erreur lors du signalement');
   } catch { showToast('⚠ Erreur réseau'); }
+}
+
+// ── WebSocket — mises à jour temps réel ──
+
+function handleWsEvent(ev) {
+  if (ev.type === 'camera_added') {
+    const c = ev.camera;
+    if (cameraIdSet.has(c.id)) return;
+    cameraIdSet.add(c.id);
+    const cam = {
+      id: c.id, lat: c.lat, lng: c.lng,
+      direction: c.direction,
+      fov:    c.fov    ?? 70,
+      range:  c.range_m ?? 30,
+      type:   c.cam_type ?? 'unknown',
+      name:   c.name,
+      source: c.source ?? 'user',
+      note:   c.note,
+    };
+    if (cam.source === 'user') userCameraCount++;
+    cameras.push(cam);
+    const idx = cameras.length - 1;
+    if (map.getBounds().pad(0.35).contains([cam.lat, cam.lng])) mountCamera(cam, idx);
+    updateStats(); updateList();
+
+  } else if (ev.type === 'camera_deleted') {
+    const idx = cameras.findIndex(c => c.id === ev.id);
+    if (idx === -1) return;
+    if (cameras[idx].source === 'user') userCameraCount--;
+    for (const k of [...renderedCameras.keys()]) unmountCamera(k);
+    cameras.splice(idx, 1);
+    cameraIdSet.delete(ev.id);
+    syncViewport();
+    updateStats(); updateList();
+
+  } else if (ev.type === 'camera_updated') {
+    const idx = cameras.findIndex(c => c.id === ev.id);
+    if (idx === -1) return;
+    cameras[idx] = {
+      ...cameras[idx],
+      lat: ev.lat, lng: ev.lng,
+      direction: ev.direction,
+      fov:    ev.fov    ?? cameras[idx].fov,
+      range:  ev.range_m ?? cameras[idx].range,
+      type:   ev.cam_type ?? cameras[idx].type,
+      name:   ev.name  ?? cameras[idx].name,
+      note:   ev.note  ?? cameras[idx].note,
+    };
+    unmountCamera(idx);
+    if (map.getBounds().pad(0.35).contains([cameras[idx].lat, cameras[idx].lng])) {
+      mountCamera(cameras[idx], idx);
+    }
+    updateStats(); updateList();
+  }
+}
+
+function connectEventStream(delay = 1000) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/api/events`);
+  ws.onopen    = () => { delay = 1000; };
+  ws.onmessage = e => { try { handleWsEvent(JSON.parse(e.data)); } catch {} };
+  ws.onclose   = () => setTimeout(() => connectEventStream(Math.min(delay * 2, 30000)), delay);
 }
 
 // ── Jump-to-camera (lien admin ?cam=) ──
