@@ -67,16 +67,16 @@ function computeExposureScore(coords) {
 // ── Rendu ──
 
 const ZONE_STYLES = {
-  fixed: [
-    { key: 'high',         fill: 'rgba(50,210,50,0.13)',  stroke: 'rgba(50,210,50,0.55)',  w: 0.8, dash: '4,6' },
-    { key: 'standard',     fill: 'rgba(255,165,0,0.26)',  stroke: 'rgba(255,165,0,0.72)',  w: 1.1, dash: null  },
-    { key: 'conservative', fill: 'rgba(255,40,40,0.38)',  stroke: 'rgba(255,40,40,0.88)',  w: 1.5, dash: null  },
-  ],
-  ptz: [
-    { key: 'high',         fill: 'rgba(50,210,50,0.11)',  stroke: 'rgba(50,210,50,0.48)',  w: 0.8, dash: '4,6' },
-    { key: 'standard',     fill: 'rgba(255,165,0,0.24)',  stroke: 'rgba(255,165,0,0.65)',  w: 1.1, dash: null  },
-    { key: 'conservative', fill: 'rgba(255,40,40,0.36)',  stroke: 'rgba(255,40,40,0.82)',  w: 1.4, dash: null  },
-  ],
+  fixed: {
+    conservative: { fill: 'rgba(255,40,40,0.38)',  stroke: 'rgba(255,40,40,0.88)',  w: 1.5, dash: null  },
+    standard:     { fill: 'rgba(255,165,0,0.28)',  stroke: 'rgba(255,165,0,0.80)',  w: 1.2, dash: null  },
+    high:         { fill: 'rgba(50,210,50,0.20)',  stroke: 'rgba(50,210,50,0.70)',  w: 1.0, dash: '4,6' },
+  },
+  ptz: {
+    conservative: { fill: 'rgba(255,40,40,0.34)',  stroke: 'rgba(255,40,40,0.82)',  w: 1.4, dash: null  },
+    standard:     { fill: 'rgba(255,165,0,0.25)',  stroke: 'rgba(255,165,0,0.73)',  w: 1.2, dash: null  },
+    high:         { fill: 'rgba(50,210,50,0.17)',  stroke: 'rgba(50,210,50,0.62)',  w: 1.0, dash: '4,6' },
+  },
 };
 
 function renderCamera(cam) {
@@ -84,28 +84,22 @@ function renderCamera(cam) {
   const isPTZ  = type === 'ptz' || type === 'dome';
   const hasDir = direction !== null && !isPTZ;
   const styles = isPTZ ? ZONE_STYLES.ptz : ZONE_STYLES.fixed;
+  const z      = styles[rangePreset] ?? styles.standard;
+  const rangeM = getRange(cam);
+  const opts   = { fillColor: z.fill, fillOpacity: 1, color: z.stroke, weight: z.w, dashArray: z.dash };
 
-  const savedPreset = rangePreset;
-  const zoneLayers  = [];
-
-  for (const z of styles) {
-    rangePreset = z.key;
-    const rangeM = getRange(cam);
-    const opts = { fillColor: z.fill, fillOpacity: 1, color: z.stroke, weight: z.w, dashArray: z.dash };
-    let poly;
-    if (buildings.length > 0) {
-      const vDir  = hasDir ? direction : null;
-      const vFov  = hasDir ? (fov || 70) : 360;
-      const nRays = isPTZ ? 180 : (hasDir ? Math.max(60, Math.round(vFov)) : 120);
-      poly = L.polygon(computeViewshed(lat, lng, rangeM, vDir, vFov, nRays), opts);
-    } else if (isPTZ || !hasDir) {
-      poly = L.polygon(buildCircle(lat, lng, rangeM, 36), opts);
-    } else {
-      poly = L.polygon(buildCone(lat, lng, direction, fov || 70, rangeM, 24), opts);
-    }
-    zoneLayers.push(poly);
+  let poly;
+  if (buildings.length > 0) {
+    const vDir  = hasDir ? direction : null;
+    const vFov  = hasDir ? (fov || 70) : 360;
+    const nRays = isPTZ ? 180 : (hasDir ? Math.max(60, Math.round(vFov)) : 120);
+    poly = L.polygon(computeViewshed(lat, lng, rangeM, vDir, vFov, nRays), opts);
+  } else if (isPTZ || !hasDir) {
+    poly = L.polygon(buildCircle(lat, lng, rangeM, 36), opts);
+  } else {
+    poly = L.polygon(buildCone(lat, lng, direction, fov || 70, rangeM, 24), opts);
   }
-  rangePreset = savedPreset;
+  const zoneLayers = [poly];
 
   const isInferred = source === 'inferred';
   const dotColor = source === 'user' ? '#ffb300'
