@@ -159,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
     // Routeur : API en premier, puis fallback vers les fichiers statiques
     let app = Router::new()
         .route("/", get(serve_index))
+        .route("/admin.html", get(serve_admin))
         .route("/health", get(health))
         .route(
             "/api/cameras",
@@ -198,6 +199,7 @@ async fn main() -> anyhow::Result<()> {
 //   • ?v=GIT_HASH sur les assets — URL unique par build → browser recharge si changé
 
 const INDEX_HTML: &str = include_str!("../public/index.html");
+const ADMIN_HTML: &str = include_str!("../public/admin.html");
 const BUILD_ID:   &str = env!("GIT_HASH");
 
 async fn serve_index() -> impl IntoResponse {
@@ -210,6 +212,21 @@ async fn serve_index() -> impl IntoResponse {
         .replace(r#"src="/js/routing.js""#,     &format!(r#"src="/js/routing.js?v={}""#,     BUILD_ID))
         .replace(r#"src="/js/ui.js""#,          &format!(r#"src="/js/ui.js?v={}""#,          BUILD_ID));
 
+    (
+        [
+            (header::CONTENT_TYPE,  HeaderValue::from_static("text/html; charset=utf-8")),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-cache, no-store, must-revalidate")),
+            (header::PRAGMA,        HeaderValue::from_static("no-cache")),
+            (header::EXPIRES,       HeaderValue::from_static("0")),
+        ],
+        html,
+    )
+}
+
+async fn serve_admin() -> impl IntoResponse {
+    let html = ADMIN_HTML
+        .replace(r#"href="/css/admin.css""#, &format!(r#"href="/css/admin.css?v={}""#, BUILD_ID))
+        .replace(r#"src="/js/admin.js""#,    &format!(r#"src="/js/admin.js?v={}""#,    BUILD_ID));
     (
         [
             (header::CONTENT_TYPE,  HeaderValue::from_static("text/html; charset=utf-8")),
