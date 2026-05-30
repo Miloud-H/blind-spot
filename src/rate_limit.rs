@@ -1,5 +1,6 @@
 use axum::{extract::Request, http::{HeaderMap, StatusCode}, middleware::Next, response::{IntoResponse, Response}};
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
+use sha2::{Digest, Sha256};
 use std::{net::IpAddr, num::NonZeroU32, sync::Arc};
 
 pub type KeyedLimiter = Arc<DefaultKeyedRateLimiter<IpAddr>>;
@@ -20,6 +21,11 @@ pub fn client_ip(headers: &HeaderMap) -> IpAddr {
         .map(str::trim)
         .and_then(|s| s.parse().ok())
         .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+}
+
+/// SHA-256 de l'IP (irréversible) — utilisé pour la déduplication, jamais l'IP brute.
+pub fn hash_ip(headers: &HeaderMap) -> String {
+    format!("{:x}", Sha256::new().chain_update(client_ip(headers).to_string()).finalize())
 }
 
 pub async fn enforce(lim: KeyedLimiter, req: Request, next: Next) -> Response {

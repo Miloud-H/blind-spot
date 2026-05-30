@@ -1,10 +1,10 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use crate::{
-    db,
+    db, rate_limit,
     error::AppError,
     models::{BboxQuery, Camera, CreateCameraRequest},
     AppState,
@@ -24,14 +24,15 @@ pub async fn list(
 /// POST /api/cameras
 pub async fn create(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<CreateCameraRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
-    // Validation basique
     if req.lat < -90.0 || req.lat > 90.0 || req.lng < -180.0 || req.lng > 180.0 {
         return Err(AppError::BadRequest("Coordonnées invalides".into()));
     }
 
-    let id: i64 = db::insert_camera(&state.pool, &req).await?;
+    let ip_hash = rate_limit::hash_ip(&headers);
+    let id: i64 = db::insert_camera(&state.pool, &req, &ip_hash).await?;
 
     let _ = state.event_bus.send(serde_json::to_string(&serde_json::json!({
         "type": "camera_added",
@@ -56,23 +57,42 @@ pub async fn create(
 }
 
 
-/// POST /api/cameras/:id/report — incrémente le compteur de signalements
+/// POST /api/cameras/:id/report — signalement dédupliqué par hash IP
 pub async fn report(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let affected = sqlx::query(
-        "UPDATE cameras SET report_count = report_count + 1 WHERE id = ?",
+    // Vérifie que la caméra existe
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE id = ?")
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+    if exists == 0 {
+        return Err(AppError::NotFound);
+    }
+
+    let ip_hash = rate_limit::hash_ip(&headers);
+
+    // INSERT OR IGNORE : si le hash a déjà signalé cette caméra, aucun effet
+    let inserted = sqlx::query(
+        "INSERT OR IGNORE INTO camera_reports (camera_id, ip_hash) VALUES (?, ?)",
     )
     .bind(id)
+    .bind(&ip_hash)
     .execute(&state.pool)
     .await?
     .rows_affected();
 
-    if affected == 0 {
-        return Err(AppError::NotFound);
+    if inserted > 0 {
+        sqlx::query("UPDATE cameras SET report_count = report_count + 1 WHERE id = ?")
+            .bind(id)
+            .execute(&state.pool)
+            .await?;
+        Ok(Json(serde_json::json!({ "message": "Signalement enregistré" })))
+    } else {
+        Ok(Json(serde_json::json!({ "message": "Déjà signalé" })))
     }
-    Ok(Json(serde_json::json!({ "message": "Signalement enregistré" })))
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -78,6 +78,14 @@ cargo build --release --locked --target x86_64-unknown-linux-musl
 
 The binary is self-contained (SQLite bundled, no OpenSSL dependency). It runs as a systemd service behind nginx. See `.github/workflows/deploy.yml` for the full pipeline.
 
+## Privacy & data model
+
+BLINDSPOT is a privacy tool — its own data practices follow the same principle:
+
+- **No raw IP addresses stored.** On camera creation and reporting, the client IP is hashed with SHA-256 (irreversible) before being written to the database. The original IP is never persisted.
+- **Deduplicated reports.** The `camera_reports` table holds `(camera_id, ip_hash)` pairs with a UNIQUE constraint. One hash can report a given camera only once; `report_count` reflects distinct reporters, not click counts.
+- **No accounts, no cookies, no tracking.** The frontend uses only `localStorage` for route history and sidebar width.
+
 ## How it works
 
 1. On startup, camera and building data is imported from [Overpass API](https://overpass-api.de/) (OSM `man_made=surveillance` + building footprints) into SQLite. Data refreshes automatically when older than 7 days.

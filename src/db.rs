@@ -150,11 +150,15 @@ pub async fn count_buildings(pool: &SqlitePool) -> i64 {
 
 /// Insère une caméra communautaire (source = 'user').
 /// Retourne last_insert_rowid.
-pub async fn insert_camera(pool: &SqlitePool, req: &CreateCameraRequest) -> sqlx::Result<i64> {
+pub async fn insert_camera(
+    pool: &SqlitePool,
+    req: &CreateCameraRequest,
+    created_from: &str,
+) -> sqlx::Result<i64> {
     let result = sqlx::query(
         r#"
-        INSERT INTO cameras (lat, lng, direction, fov, range_m, cam_type, name, note, source)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'user')
+        INSERT INTO cameras (lat, lng, direction, fov, range_m, cam_type, name, note, source, created_from)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'user', $9)
         "#,
     )
     .bind(req.lat)
@@ -165,6 +169,7 @@ pub async fn insert_camera(pool: &SqlitePool, req: &CreateCameraRequest) -> sqlx
     .bind(req.cam_type.as_deref().unwrap_or("unknown"))
     .bind(req.name.as_deref())
     .bind(req.note.as_deref())
+    .bind(created_from)
     .execute(pool)
     .await?;
 
