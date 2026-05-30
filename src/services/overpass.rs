@@ -86,18 +86,7 @@ pub async fn seed_from_overpass(pool: &SqlitePool, client: &Client) -> anyhow::R
 
     let mut ok = 0u32;
     for el in &elements {
-        let direction = parse_direction(
-            el.tags.get("camera:direction").or_else(|| el.tags.get("direction")),
-        );
-        let fov = el
-            .tags
-            .get("camera:angle")
-            .or_else(|| el.tags.get("camera:fov"))
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(70.0)
-            .clamp(10.0, 180.0);
-
-        // Déterminer le type en premier — nécessaire pour le défaut de portée
+        // Déterminer le type en premier — nécessaire pour le défaut de portée et direction
         let type_raw = el
             .tags
             .get("camera:type")
@@ -105,22 +94,55 @@ pub async fn seed_from_overpass(pool: &SqlitePool, client: &Client) -> anyhow::R
             .map(String::as_str)
             .unwrap_or("");
 
-        // "panning" = caméra rotative (même comportement que PTZ pour le routing)
-        let cam_type = if matches!(type_raw, "ptz" | "dome" | "panoramic" | "panning") {
-            "ptz"
-        } else {
-            "fixed"
+        // Conserver dome et panoramic comme types distincts (comportements de rendu différents).
+        // panning = rotatif simple → même comportement que PTZ.
+        let cam_type = match type_raw {
+            "ptz" | "panning"  => "ptz",
+            "dome"             => "dome",
+            "panoramic"        => "panoramic",
+            _                  => "fixed",
         };
 
-        // Portée depuis le tag OSM camera:range, sinon défaut basé sur le type.
-        // Ces valeurs correspondent à BASE_RANGE côté frontend (fixed=38, ptz=28).
-        let default_range_m: f64 = if cam_type == "ptz" { 28.0 } else { 38.0 };
+        // Dôme : coupole opaque → direction réelle inconnue même si le tag est renseigné.
+        // PTZ / panoramique : couvrent 360° → direction irrelevante.
+        let direction = match cam_type {
+            "ptz" | "dome" | "panoramic" => None,
+            _ => parse_direction(
+                el.tags.get("camera:direction").or_else(|| el.tags.get("direction")),
+            ),
+        };
+
+        // Portées calibrées selon les données du doc "Pas vue, pas prise" (p.24-31) :
+        //   fixed     : ~30 m (identification/reconnaissance, focale ~3 mm Full HD)
+        //   dome      : ~20 m (pas de zoom, direction inconnue, couverture réduite)
+        //   ptz       : ~50 m (zoom optique ×2.8→12 mm, parfois ×43)
+        //   panoramic : ~40 m (multi-capteurs, pas de zoom focal)
+        let default_range_m: f64 = match cam_type {
+            "ptz"       => 50.0,
+            "dome"      => 20.0,
+            "panoramic" => 40.0,
+            _           => 30.0,
+        };
         let range_m = el
             .tags
             .get("camera:range")
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(default_range_m)
             .clamp(5.0, 300.0);
+
+        // FOV par défaut basé sur le type (circulaire = 360 ignoré côté rendu, sert juste de marqueur)
+        let default_fov: f64 = match cam_type {
+            "ptz" | "panoramic" => 360.0,
+            "dome"              => 180.0,
+            _                   => 80.0,
+        };
+        let fov = el
+            .tags
+            .get("camera:angle")
+            .or_else(|| el.tags.get("camera:fov"))
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(default_fov)
+            .clamp(10.0, 360.0);
 
         let name = el
             .tags

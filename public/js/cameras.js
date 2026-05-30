@@ -27,7 +27,12 @@ function _markAndGetFetchBbox(s, w, n, e) {
   return [fs, fw, fn_, fe];
 }
 
-const BASE_RANGE  = { fixed: 38, ptz: 28, unknown: 20 };
+// Portées calibrées d'après "Pas vue, pas prise" (p.24-31) :
+//   fixed     : ~30 m  (identification, Full HD focale 3 mm)
+//   dome      : ~20 m  (coupole opaque, pas de zoom)
+//   ptz       : ~50 m  (zoom optique jusqu'à ×43)
+//   panoramic : ~40 m  (multi-capteurs, grand angle sans zoom focal)
+const BASE_RANGE  = { fixed: 30, dome: 20, ptz: 50, panoramic: 40, unknown: 20 };
 const PRESET_MULT = { conservative: 0.5, standard: 1.0, high: 2.2 };
 let rangePreset = 'standard';
 
@@ -36,17 +41,19 @@ function getRange(cam) {
   return (BASE_RANGE[cam.type] ?? BASE_RANGE.unknown) * PRESET_MULT[rangePreset];
 }
 
+const CIRCULAR_TYPES = new Set(['ptz', 'dome', 'panoramic']);
+
 function isPointInCameraZone(lat, lng, cam) {
-  const isPTZ  = cam.type === 'ptz' || cam.type === 'dome';
+  const isCircular = CIRCULAR_TYPES.has(cam.type) || cam.direction === null;
   const base   = cam.source === 'user' ? (cam.range || 30) : (BASE_RANGE[cam.type] ?? BASE_RANGE.unknown);
   const rangeM = base * PRESET_MULT.standard;
   const dist   = haversineDistance(lat, lng, cam.lat, cam.lng);
   if (dist > rangeM * 1.15) return false;
-  if (isPTZ || cam.direction === null) return dist <= rangeM;
+  if (isCircular) return dist <= rangeM;
   const bearing = bearingTo(cam.lat, cam.lng, lat, lng);
   let diff = Math.abs(bearing - cam.direction);
   if (diff > 180) diff = 360 - diff;
-  return diff <= (cam.fov || 70) / 2 && dist <= rangeM;
+  return diff <= (cam.fov || 80) / 2 && dist <= rangeM;
 }
 
 function computeExposureScore(coords) {
@@ -81,9 +88,9 @@ const ZONE_STYLES = {
 
 function renderCamera(cam) {
   const { id, lat, lng, direction, fov, type, name, source, note } = cam;
-  const isPTZ  = type === 'ptz' || type === 'dome';
-  const hasDir = direction !== null && !isPTZ;
-  const styles = isPTZ ? ZONE_STYLES.ptz : ZONE_STYLES.fixed;
+  const isCircular = CIRCULAR_TYPES.has(type) || direction === null;
+  const hasDir = direction !== null && !isCircular;
+  const styles = ZONE_STYLES[type] ?? (isCircular ? ZONE_STYLES.ptz : ZONE_STYLES.fixed);
   const z      = styles[rangePreset] ?? styles.standard;
   const rangeM = getRange(cam);
   const opts   = { fillColor: z.fill, fillOpacity: 1, color: z.stroke, weight: z.w, dashArray: z.dash };
@@ -91,21 +98,20 @@ function renderCamera(cam) {
   let poly;
   if (buildings.length > 0) {
     const vDir  = hasDir ? direction : null;
-    const vFov  = hasDir ? (fov || 70) : 360;
-    const nRays = isPTZ ? 180 : (hasDir ? Math.max(60, Math.round(vFov)) : 120);
+    const vFov  = hasDir ? (fov || 80) : 360;
+    const nRays = isCircular ? 180 : (hasDir ? Math.max(60, Math.round(vFov)) : 120);
     poly = L.polygon(computeViewshed(lat, lng, rangeM, vDir, vFov, nRays), opts);
-  } else if (isPTZ || !hasDir) {
+  } else if (isCircular) {
     poly = L.polygon(buildCircle(lat, lng, rangeM, 36), opts);
   } else {
-    poly = L.polygon(buildCone(lat, lng, direction, fov || 70, rangeM, 24), opts);
+    poly = L.polygon(buildCone(lat, lng, direction, fov || 80, rangeM, 24), opts);
   }
   const zoneLayers = [poly];
 
-  const isInferred = source === 'inferred';
-  const dotColor = source === 'user' ? '#ffb300'
-                 : isInferred        ? '#00b8d4'
-                 : isPTZ             ? '#ff8c00'
-                 :                     '#ff3131';
+  const dotColor = source === 'user'     ? '#ffb300'
+                 : source === 'inferred' ? '#00b8d4'
+                 : isCircular            ? '#ff8c00'
+                 :                         '#ff3131';
   const camIcon = L.divIcon({
     html: `<div style="width:8px;height:8px;background:${dotColor};border-radius:50%;border:1px solid rgba(255,255,255,0.35);box-shadow:0 0 6px ${dotColor};"></div>`,
     iconSize: [8,8], iconAnchor: [4,4], className: '',
@@ -113,10 +119,17 @@ function renderCamera(cam) {
   const marker = L.marker([lat, lng], { icon: camIcon, zIndexOffset: 100 });
 
   const baseRangeM = Math.round(BASE_RANGE[type] ?? BASE_RANGE.unknown);
-  const dirTxt = hasDir ? `${Math.round(direction)}° (FOV ${fov||70}°)` : (isPTZ ? '360° PTZ' : 'Inconnue');
+  const typeLabel  = type === 'dome'      ? 'Dôme'
+                   : type === 'panoramic' ? 'Panoramique 360°'
+                   : type === 'ptz'       ? 'PTZ / Rotatif'
+                   :                        'Fixe';
+  const dirTxt     = type === 'dome'      ? 'Inconnue (coupole opaque)'
+                   : isCircular           ? '360°'
+                   : hasDir               ? `${Math.round(direction)}° (FOV ${fov||80}°)`
+                   :                        'Inconnue';
   const popupHtml = `
     <div class="popup-title">📹 ${name || 'Caméra de surveillance'}</div>
-    <div class="popup-row">Type: <span>${isPTZ ? 'PTZ / Dôme' : 'Fixe'}</span></div>
+    <div class="popup-row">Type: <span>${typeLabel}</span></div>
     <div class="popup-row">Direction: <span>${dirTxt}</span></div>
     <div class="popup-row">Portée estimée: <span>${Math.round(baseRangeM*0.5)}–${Math.round(baseRangeM*2.2)} m</span></div>
     <div class="popup-row">Source: <span>${
@@ -165,8 +178,7 @@ function updateList() {
   [...cameras].reverse().forEach((cam, i) => {
     const item = document.createElement('div');
     item.className = 'camera-item';
-    const isPTZ = cam.type === 'ptz' || cam.type === 'dome';
-    const icon  = isPTZ ? '🔄' : (cam.direction !== null ? '📹' : '📷');
+    const icon = CIRCULAR_TYPES.has(cam.type) ? '🔄' : (cam.direction !== null ? '📹' : '📷');
     item.innerHTML = `
       <span class="camera-icon">${icon}</span>
       <div class="camera-info">
@@ -181,8 +193,12 @@ function updateList() {
 
 function updateStats() {
   document.getElementById('stat-total').textContent = cameras.length;
-  document.getElementById('stat-cones').textContent = cameras.filter(c => c.direction !== null && c.type !== 'ptz').length;
-  document.getElementById('stat-ptz').textContent   = cameras.filter(c => c.type === 'ptz' || c.type === 'dome').length;
+  document.getElementById('stat-cones').textContent = cameras.filter(c =>
+    c.direction !== null && !CIRCULAR_TYPES.has(c.type)
+  ).length;
+  document.getElementById('stat-ptz').textContent = cameras.filter(c =>
+    CIRCULAR_TYPES.has(c.type) || c.direction === null
+  ).length;
   document.getElementById('stat-user').textContent  = userCameraCount;
   const el = document.getElementById('stat-inferred');
   if (el) el.textContent = cameras.filter(c => c.source === 'inferred').length;
