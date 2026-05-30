@@ -71,6 +71,16 @@ pub struct ReportedCamera {
     pub source:       String,
     pub report_count: i64,
     pub name:         Option<String>,
+    pub direction:    Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdminCamerasQuery {
+    pub page:     Option<i64>,
+    pub limit:    Option<i64>,
+    pub source:   Option<String>,
+    pub cam_type: Option<String>,
+    pub reported: Option<bool>,
 }
 
 // ── Réponses HTTP ────────────────────────────────────────────────────────────

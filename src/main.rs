@@ -139,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
     // CORS — permissif pour le prototype (à restreindre en prod)
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
     // Fichiers statiques servis depuis ./public/
@@ -157,7 +157,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/route",               post(handlers::routing::calculate))
         .route("/api/admin/stats",         get(handlers::admin::stats))
         .route("/api/admin/reports",       get(handlers::admin::list_reports))
+        .route("/api/admin/cameras",       get(handlers::admin::list_cameras))
         .route("/api/admin/cameras/:id",   axum::routing::delete(handlers::admin::delete_camera))
+        .route("/api/admin/export/osm",    get(handlers::admin::export_osm))
+        .route("/api/admin/cache",         axum::routing::delete(handlers::admin::clear_cache))
         .route("/api/admin/reseed",        post(handlers::admin::reseed))
         .with_state(state)
         .layer(cors)

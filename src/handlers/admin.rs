@@ -1,11 +1,13 @@
 use axum::{
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    body::Body,
+    extract::{Path, Query, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::Response,
     Json,
 };
 use crate::{
     error::AppError,
-    models::ReportedCamera,
+    models::{AdminCamerasQuery, Camera, ReportedCamera},
     services::overpass,
     AppState,
 };
@@ -24,6 +26,40 @@ fn require_admin(headers: &HeaderMap, token: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// GET /api/admin/stats — statistiques globales enrichies
+pub async fn stats(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_admin(&headers, &state.config.admin_token)?;
+
+    let total: i64    = sqlx::query_scalar("SELECT COUNT(*) FROM cameras").fetch_one(&state.pool).await?;
+    let osm: i64      = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'osm'").fetch_one(&state.pool).await?;
+    let user: i64     = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'user'").fetch_one(&state.pool).await?;
+    let inferred: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'inferred'").fetch_one(&state.pool).await?;
+    let reported: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE report_count > 0").fetch_one(&state.pool).await?;
+    let user_reported: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'user' AND report_count > 0").fetch_one(&state.pool).await?;
+    let type_fixed: i64   = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE cam_type = 'fixed'").fetch_one(&state.pool).await?;
+    let type_ptz: i64     = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE cam_type = 'ptz'").fetch_one(&state.pool).await?;
+    let type_unknown: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE cam_type = 'unknown'").fetch_one(&state.pool).await?;
+    let with_direction: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE direction IS NOT NULL").fetch_one(&state.pool).await?;
+    let cache_size = state.route_cache.len().await as i64;
+
+    Ok(Json(serde_json::json!({
+        "cameras_total":      total,
+        "cameras_osm":        osm,
+        "cameras_user":       user,
+        "cameras_inferred":   inferred,
+        "cameras_reported":   reported,
+        "cameras_user_reported": user_reported,
+        "type_fixed":         type_fixed,
+        "type_ptz":           type_ptz,
+        "type_unknown":       type_unknown,
+        "cameras_with_direction": with_direction,
+        "route_cache_size":   cache_size,
+    })))
+}
+
 /// GET /api/admin/reports — caméras avec au moins 1 signalement
 pub async fn list_reports(
     State(state): State<AppState>,
@@ -32,7 +68,7 @@ pub async fn list_reports(
     require_admin(&headers, &state.config.admin_token)?;
 
     let cameras = sqlx::query_as::<_, ReportedCamera>(
-        "SELECT id, lat, lng, cam_type, source, report_count, name
+        "SELECT id, lat, lng, cam_type, source, report_count, name, direction
          FROM cameras WHERE report_count > 0
          ORDER BY report_count DESC LIMIT 200",
     )
@@ -40,6 +76,62 @@ pub async fn list_reports(
     .await?;
 
     Ok(Json(cameras))
+}
+
+/// GET /api/admin/cameras?page=1&limit=50&source=&cam_type=&reported=
+pub async fn list_cameras(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<AdminCamerasQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_admin(&headers, &state.config.admin_token)?;
+
+    let page  = params.page.unwrap_or(1).max(1);
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
+    let offset = (page - 1) * limit;
+
+    let mut wheres: Vec<String> = Vec::new();
+
+    if let Some(ref src) = params.source {
+        if !["osm", "user", "inferred"].contains(&src.as_str()) {
+            return Err(AppError::BadRequest("source invalide".into()));
+        }
+        wheres.push(format!("source = '{src}'"));
+    }
+    if let Some(ref t) = params.cam_type {
+        if !["fixed", "ptz", "unknown"].contains(&t.as_str()) {
+            return Err(AppError::BadRequest("cam_type invalide".into()));
+        }
+        wheres.push(format!("cam_type = '{t}'"));
+    }
+    if params.reported.unwrap_or(false) {
+        wheres.push("report_count > 0".to_string());
+    }
+
+    let where_sql = if wheres.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", wheres.join(" AND "))
+    };
+
+    let total: i64 = sqlx::query_scalar(
+        &format!("SELECT COUNT(*) FROM cameras {where_sql}")
+    ).fetch_one(&state.pool).await?;
+
+    let cameras = sqlx::query_as::<_, ReportedCamera>(
+        &format!(
+            "SELECT id, lat, lng, cam_type, source, report_count, name, direction \
+             FROM cameras {where_sql} ORDER BY id DESC LIMIT {limit} OFFSET {offset}"
+        )
+    ).fetch_all(&state.pool).await?;
+
+    Ok(Json(serde_json::json!({
+        "cameras": cameras,
+        "total":   total,
+        "page":    page,
+        "limit":   limit,
+        "pages":   ((total as f64) / (limit as f64)).ceil() as i64,
+    })))
 }
 
 /// DELETE /api/admin/cameras/:id — supprime une caméra
@@ -62,6 +154,81 @@ pub async fn delete_camera(
     Ok((StatusCode::OK, Json(serde_json::json!({ "deleted": id }))))
 }
 
+/// GET /api/admin/export/osm — exporte les caméras communautaires en .osm (JOSM)
+pub async fn export_osm(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    require_admin(&headers, &state.config.admin_token)?;
+
+    let cameras = sqlx::query_as::<_, Camera>(
+        "SELECT id, osm_id, lat, lng, direction, fov, range_m, cam_type, name, \
+                operator, note, source, verified \
+         FROM cameras WHERE source = 'user' AND report_count = 0 ORDER BY id",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut nodes = String::new();
+    for (i, cam) in cameras.iter().enumerate() {
+        let node_id = -(i as i64 + 1);
+
+        let type_tag = match cam.cam_type.as_str() {
+            "ptz"   => "    <tag k=\"camera:type\" v=\"dome\"/>\n",
+            "fixed" => "    <tag k=\"camera:type\" v=\"fixed\"/>\n",
+            _       => "",
+        };
+        let dir_tag = cam.direction
+            .map(|d| format!("    <tag k=\"direction\" v=\"{:.0}\"/>\n", d))
+            .unwrap_or_default();
+        let note_tag = cam.note.as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("    <tag k=\"note\" v=\"{}\"/>\n", s.replace('"', "&quot;")))
+            .unwrap_or_default();
+        let name_tag = cam.name.as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("    <tag k=\"name\" v=\"{}\"/>\n", s.replace('"', "&quot;")))
+            .unwrap_or_default();
+
+        nodes.push_str(&format!(
+            "  <node id=\"{node_id}\" lat=\"{:.7}\" lon=\"{:.7}\" version=\"1\" action=\"create\">\n\
+             {type_tag}{dir_tag}{name_tag}{note_tag}\
+             \t<tag k=\"man_made\" v=\"surveillance\"/>\n\
+             \t<tag k=\"surveillance\" v=\"outdoor\"/>\n\
+             \t<tag k=\"surveillance:type\" v=\"camera\"/>\n\
+             \t<tag k=\"source\" v=\"survey\"/>\n\
+             \t<tag k=\"note:source\" v=\"BlindSpot MTL\"/>\n\
+           </node>\n",
+            cam.lat, cam.lng,
+        ));
+    }
+
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <osm version=\"0.6\" generator=\"BlindSpot MTL\">\n\
+         {nodes}</osm>\n"
+    );
+
+    let response = axum::http::Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, HeaderValue::from_static("application/xml; charset=utf-8"))
+        .header(header::CONTENT_DISPOSITION, HeaderValue::from_static("attachment; filename=\"blindspot-export.osm\""))
+        .body(Body::from(xml))
+        .map_err(|e| AppError::External(e.to_string()))?;
+
+    Ok(response)
+}
+
+/// DELETE /api/admin/cache — vide le cache de routes en mémoire
+pub async fn clear_cache(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_admin(&headers, &state.config.admin_token)?;
+    state.route_cache.clear().await;
+    Ok(Json(serde_json::json!({ "message": "Cache vidé" })))
+}
+
 /// POST /api/admin/reseed — déclenche un re-import OSM complet
 pub async fn reseed(
     State(state): State<AppState>,
@@ -76,31 +243,5 @@ pub async fn reseed(
     Ok(Json(serde_json::json!({
         "seeded": n,
         "message": format!("{n} caméras importées depuis OSM")
-    })))
-}
-
-/// GET /api/admin/stats — statistiques globales
-pub async fn stats(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras")
-        .fetch_one(&state.pool).await?;
-    let osm: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'osm'")
-        .fetch_one(&state.pool).await?;
-    let user: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'user'")
-        .fetch_one(&state.pool).await?;
-    let reported: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE report_count > 0")
-        .fetch_one(&state.pool).await?;
-    let cache_size = state.route_cache.len().await as i64;
-
-    Ok(Json(serde_json::json!({
-        "cameras_total":    total,
-        "cameras_osm":      osm,
-        "cameras_user":     user,
-        "cameras_reported": reported,
-        "route_cache_size": cache_size,
     })))
 }

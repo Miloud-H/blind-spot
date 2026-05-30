@@ -4,150 +4,511 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BLINDSPOT // ADMIN</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#050a06; --surface:#0a120b; --surface2:#0f1d10; --green:#00ff41; --red:#ff3131; --amber:#ffb300; --text:#b8ffca; --dim:#5a8f65; --border:rgba(0,255,65,0.15); }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:var(--bg); color:var(--text); font-family:'Share Tech Mono',monospace; min-height:100vh; padding:24px; }
-  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
-  h1 { color:var(--green); letter-spacing:4px; font-size:18px; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:24px; }
-  h1 span { color:var(--dim); }
-  .section { background:var(--surface); border:1px solid var(--border); padding:16px; margin-bottom:16px; }
-  .section-title { font-size:9px; letter-spacing:3px; color:var(--dim); margin-bottom:12px; }
-  .token-row { display:flex; gap:8px; }
-  input[type=text], input[type=password] { background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:8px 12px; font-family:inherit; font-size:13px; flex:1; outline:none; }
-  input:focus { border-color:var(--green); }
-  button { background:transparent; border:1px solid var(--green); color:var(--green); padding:8px 16px; font-family:inherit; font-size:11px; letter-spacing:2px; cursor:pointer; transition:all .15s; }
-  button:hover { background:rgba(0,255,65,0.08); }
-  button.danger { border-color:var(--red); color:var(--red); }
-  button.danger:hover { background:rgba(255,49,49,0.08); }
-  button.amber { border-color:var(--amber); color:var(--amber); }
-  button.amber:hover { background:rgba(255,179,0,0.08); }
-  .stats-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px; }
-  .stat { background:var(--surface2); padding:12px; text-align:center; }
-  .stat-n { font-size:28px; font-family:'Share Tech Mono',monospace; color:var(--green); }
-  .stat-l { font-size:9px; letter-spacing:2px; color:var(--dim); margin-top:2px; }
-  .stat-n.red { color:var(--red); }
-  .stat-n.amber { color:var(--amber); }
-  table { width:100%; border-collapse:collapse; font-size:12px; }
-  th { text-align:left; font-size:9px; letter-spacing:2px; color:var(--dim); padding:6px 8px; border-bottom:1px solid var(--border); }
-  td { padding:7px 8px; border-bottom:1px solid rgba(0,255,65,0.06); vertical-align:middle; }
-  tr:hover td { background:rgba(0,255,65,0.03); }
-  .badge { display:inline-block; padding:2px 6px; font-size:9px; letter-spacing:1px; }
-  .badge.osm { border:1px solid var(--dim); color:var(--dim); }
-  .badge.user { border:1px solid var(--amber); color:var(--amber); }
-  .badge.inferred { border:1px solid rgba(0,184,212,0.5); color:#00b8d4; }
-  .count-red { color:var(--red); font-weight:bold; }
-  .toast { position:fixed; bottom:20px; right:20px; background:var(--surface2); border:1px solid var(--green); padding:10px 16px; font-size:12px; display:none; }
-  #log { font-size:11px; color:var(--dim); margin-top:10px; line-height:1.8; }
-  .empty { color:var(--dim); font-size:11px; text-align:center; padding:20px; }
+:root {
+  --bg:#050a06; --surface:#0a120b; --s2:#0f1d10; --s3:#141f15;
+  --green:#00ff41; --gdim:rgba(0,255,65,0.5);
+  --red:#ff3131; --amber:#ffb300; --cyan:#00b8d4;
+  --text:#b8ffca; --dim:#5a8f65;
+  --border:rgba(0,255,65,0.12); --bh:rgba(0,255,65,0.25);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:'Share Tech Mono',monospace;min-height:100vh;display:flex;}
+
+/* ── Sidebar nav ── */
+.nav{width:210px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:10;}
+.nav-logo{padding:18px 16px 14px;border-bottom:1px solid var(--border);}
+.nav-logo .t{font-size:15px;letter-spacing:3px;color:var(--green);}
+.nav-logo .t span{color:var(--dim);}
+.nav-logo .s{font-size:9px;letter-spacing:3px;color:var(--dim);margin-top:2px;}
+.nav-items{padding:10px 0;flex:1;}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:10px;letter-spacing:1.5px;color:var(--dim);cursor:pointer;transition:all .15s;border-left:2px solid transparent;}
+.nav-item:hover{color:var(--text);background:rgba(0,255,65,0.04);}
+.nav-item.active{color:var(--green);border-left-color:var(--green);background:rgba(0,255,65,0.06);}
+.nav-item .ico{width:16px;text-align:center;font-size:12px;}
+.nbadge{margin-left:auto;background:var(--red);color:#fff;font-size:9px;padding:1px 5px;display:none;}
+.nbadge.on{display:block;}
+.nav-foot{padding:10px 16px;border-top:1px solid var(--border);font-size:9px;color:var(--dim);letter-spacing:1px;}
+
+/* ── Content ── */
+.content{margin-left:210px;flex:1;min-height:100vh;display:flex;flex-direction:column;}
+.token-bar{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.token-bar label{font-size:9px;letter-spacing:2px;color:var(--dim);}
+.token-bar input{background:var(--s2);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:inherit;font-size:11px;width:240px;outline:none;}
+.token-bar input:focus{border-color:var(--green);}
+.tokst{font-size:10px;margin-left:6px;}
+.tokst.ok{color:var(--green);}
+.tokst.err{color:var(--red);}
+
+/* ── Sections ── */
+.section{display:none;padding:22px 24px;flex:1;}
+.section.active{display:block;}
+.sec-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid var(--border);}
+.sec-title{font-size:13px;letter-spacing:3px;color:var(--green);}
+.sec-sub{font-size:9px;letter-spacing:2px;color:var(--dim);margin-top:3px;}
+
+/* ── Cards ── */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:20px;}
+.card{background:var(--surface);border:1px solid var(--border);padding:14px;text-align:center;}
+.cn{font-size:32px;color:var(--green);line-height:1;margin-bottom:3px;}
+.cn.red{color:var(--red);}
+.cn.amber{color:var(--amber);}
+.cn.cyan{color:var(--cyan);}
+.cl{font-size:9px;letter-spacing:2px;color:var(--dim);}
+
+/* ── Panel ── */
+.panel{background:var(--surface);border:1px solid var(--border);margin-bottom:14px;}
+.ph{padding:9px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.pt{font-size:9px;letter-spacing:3px;color:var(--dim);}
+.pb{padding:14px;}
+
+/* ── Two-col grid ── */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+
+/* ── Bar chart ── */
+.bc{display:flex;flex-direction:column;gap:7px;}
+.br{display:flex;align-items:center;gap:8px;font-size:10px;}
+.bl{width:82px;color:var(--dim);text-align:right;font-size:9px;letter-spacing:1px;}
+.bt{flex:1;height:11px;background:var(--s2);}
+.bf{height:100%;background:var(--green);transition:width .4s;}
+.bf.amber{background:var(--amber);}
+.bf.cyan{background:var(--cyan);}
+.bv{width:60px;color:var(--text);font-size:9px;}
+
+/* ── Filters ── */
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;}
+.filters select,.filters input[type=text]{background:var(--s2);border:1px solid var(--border);color:var(--text);padding:5px 9px;font-family:inherit;font-size:11px;outline:none;}
+.filters select:focus,.filters input:focus{border-color:var(--green);}
+.fl{font-size:9px;letter-spacing:1.5px;color:var(--dim);}
+.filters label{display:flex;align-items:center;gap:5px;font-size:10px;cursor:pointer;color:var(--dim);}
+
+/* ── Table ── */
+.tw{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;font-size:11px;}
+th{text-align:left;font-size:9px;letter-spacing:2px;color:var(--dim);padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;}
+td{padding:7px 10px;border-bottom:1px solid rgba(0,255,65,0.05);vertical-align:middle;}
+tr:hover td{background:rgba(0,255,65,0.025);}
+.td-d{font-size:10px;color:var(--dim);}
+.td-m{font-family:'Share Tech Mono',monospace;}
+
+/* ── Badges ── */
+.bg{display:inline-block;padding:2px 6px;font-size:9px;letter-spacing:1px;border:1px solid;}
+.bg.osm{border-color:var(--dim);color:var(--dim);}
+.bg.user{border-color:var(--amber);color:var(--amber);}
+.bg.inferred{border-color:rgba(0,184,212,.5);color:var(--cyan);}
+.bg.fixed{border-color:rgba(0,255,65,.3);color:var(--gdim);}
+.bg.ptz{border-color:rgba(255,179,0,.4);color:var(--amber);}
+.bg.unknown{border-color:rgba(255,255,255,.15);color:rgba(255,255,255,.4);}
+
+/* ── Pagination ── */
+.pag{display:flex;align-items:center;gap:5px;padding:12px 14px;font-size:10px;}
+.pagi{color:var(--dim);font-size:9px;margin-left:4px;}
+
+/* ── Buttons ── */
+button{background:transparent;border:1px solid var(--green);color:var(--green);padding:7px 14px;font-family:inherit;font-size:10px;letter-spacing:1.5px;cursor:pointer;transition:all .15s;}
+button:hover{background:rgba(0,255,65,0.07);}
+button:disabled{opacity:.4;cursor:not-allowed;}
+button.danger{border-color:var(--red);color:var(--red);}
+button.danger:hover{background:rgba(255,49,49,0.07);}
+button.amber{border-color:var(--amber);color:var(--amber);}
+button.amber:hover{background:rgba(255,179,0,0.07);}
+button.cyan{border-color:var(--cyan);color:var(--cyan);}
+button.cyan:hover{background:rgba(0,184,212,0.07);}
+button.sm{padding:3px 8px;font-size:9px;}
+a.btn-dl{display:inline-block;background:transparent;border:1px solid var(--green);color:var(--green);padding:9px 18px;font-family:inherit;font-size:11px;letter-spacing:2px;cursor:pointer;text-decoration:none;transition:all .15s;}
+a.btn-dl:hover{background:rgba(0,255,65,0.07);}
+
+/* ── Log ── */
+.log{background:var(--s2);border:1px solid var(--border);padding:10px 12px;font-size:11px;color:var(--dim);line-height:1.9;min-height:56px;max-height:180px;overflow-y:auto;margin-top:12px;}
+.log .ok{color:var(--green);}
+.log .err{color:var(--red);}
+
+/* ── Empty ── */
+.empty{text-align:center;padding:28px;font-size:11px;color:var(--dim);letter-spacing:1px;}
+
+/* ── Map link ── */
+a.maplnk{color:var(--dim);font-size:10px;text-decoration:none;border:1px solid var(--border);padding:3px 7px;}
+a.maplnk:hover{border-color:var(--bh);color:var(--text);}
+
+/* ── Toast ── */
+.toast{position:fixed;bottom:20px;right:20px;background:var(--surface);border:1px solid var(--green);color:var(--green);padding:9px 16px;font-size:11px;display:none;z-index:1000;letter-spacing:1px;}
+.toast.err{border-color:var(--red);color:var(--red);}
+
+/* ── Info box ── */
+.infobox{background:var(--s2);border-left:2px solid var(--green);padding:10px 14px;font-size:11px;color:var(--dim);line-height:1.9;margin-bottom:14px;}
+.infobox span{color:var(--text);}
 </style>
 </head>
 <body>
-<h1>BLIND<span>SPOT</span> // ADMIN</h1>
 
-<div class="section">
-  <div class="section-title">// AUTHENTIFICATION</div>
-  <div class="token-row">
+<!-- ── Sidebar ── -->
+<nav class="nav">
+  <div class="nav-logo">
+    <div class="t">BLIND<span>SPOT</span></div>
+    <div class="s">// ADMIN PANEL</div>
+  </div>
+  <div class="nav-items">
+    <div class="nav-item active" onclick="goto('dashboard')" id="nav-dashboard">
+      <span class="ico">◈</span> DASHBOARD
+    </div>
+    <div class="nav-item" onclick="goto('cameras')" id="nav-cameras">
+      <span class="ico">📹</span> CAMÉRAS
+    </div>
+    <div class="nav-item" onclick="goto('reports')" id="nav-reports">
+      <span class="ico">⚠</span> SIGNALEMENTS
+      <span class="nbadge" id="nbadge-rep">0</span>
+    </div>
+    <div class="nav-item" onclick="goto('export')" id="nav-export">
+      <span class="ico">⬇</span> EXPORT OSM
+    </div>
+    <div class="nav-item" onclick="goto('actions')" id="nav-actions">
+      <span class="ico">⚙</span> ACTIONS
+    </div>
+  </div>
+  <div class="nav-foot">BLINDSPOT MTL</div>
+</nav>
+
+<!-- ── Content ── -->
+<div class="content">
+
+  <!-- Token bar -->
+  <div class="token-bar">
+    <label>TOKEN</label>
     <input type="password" id="token" placeholder="ADMIN_TOKEN" autocomplete="off">
     <button onclick="loadAll()">▶ CHARGER</button>
+    <span class="tokst" id="tokst"></span>
   </div>
-</div>
 
-<div class="section" id="stats-section" style="display:none">
-  <div class="section-title">// STATISTIQUES</div>
-  <div class="stats-grid" id="stats-grid"></div>
-</div>
-
-<div class="section" id="reports-section" style="display:none">
-  <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
-    <span>// CAMÉRAS SIGNALÉES</span>
-    <button class="danger" onclick="deleteAllReported()">✕ SUPPRIMER TOUT</button>
+  <!-- ══ DASHBOARD ══ -->
+  <div class="section active" id="section-dashboard">
+    <div class="sec-head">
+      <div><div class="sec-title">// DASHBOARD</div><div class="sec-sub">Vue d'ensemble du système</div></div>
+    </div>
+    <div class="cards" id="dash-cards">
+      <div class="card"><div class="cn" id="dc-total">—</div><div class="cl">TOTAL</div></div>
+      <div class="card"><div class="cn" id="dc-osm">—</div><div class="cl">OSM</div></div>
+      <div class="card"><div class="cn amber" id="dc-user">—</div><div class="cl">COMMUNAUTÉ</div></div>
+      <div class="card"><div class="cn cyan" id="dc-inf">—</div><div class="cl">INFÉRÉES</div></div>
+      <div class="card"><div class="cn red" id="dc-rep">—</div><div class="cl">SIGNALÉES</div></div>
+      <div class="card"><div class="cn" id="dc-cache">—</div><div class="cl">CACHE ROUTES</div></div>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <div class="ph"><div class="pt">// SOURCES</div></div>
+        <div class="pb"><div class="bc" id="chart-src"></div></div>
+      </div>
+      <div class="panel">
+        <div class="ph"><div class="pt">// TYPES</div></div>
+        <div class="pb"><div class="bc" id="chart-typ"></div></div>
+      </div>
+    </div>
   </div>
-  <div id="reports-container"></div>
-</div>
 
-<div class="section" id="actions-section" style="display:none">
-  <div class="section-title">// ACTIONS</div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;">
-    <button class="amber" onclick="reseed()">⟳ RE-IMPORTER OSM</button>
+  <!-- ══ CAMERAS ══ -->
+  <div class="section" id="section-cameras">
+    <div class="sec-head">
+      <div><div class="sec-title">// INVENTAIRE CAMÉRAS</div><div class="sec-sub" id="cams-sub">—</div></div>
+    </div>
+    <div class="panel">
+      <div class="ph"><div class="pt">// FILTRES</div><button class="sm" onclick="resetFilters()">RESET</button></div>
+      <div class="pb">
+        <div class="filters">
+          <span class="fl">SOURCE</span>
+          <select id="f-src" onchange="loadCameras(1)">
+            <option value="">TOUTES</option>
+            <option value="osm">OSM</option>
+            <option value="user">COMMUNAUTÉ</option>
+            <option value="inferred">INFÉRÉES</option>
+          </select>
+          <span class="fl">TYPE</span>
+          <select id="f-type" onchange="loadCameras(1)">
+            <option value="">TOUS</option>
+            <option value="fixed">FIXE</option>
+            <option value="ptz">PTZ/DÔME</option>
+            <option value="unknown">INCONNUE</option>
+          </select>
+          <label><input type="checkbox" id="f-rep" onchange="loadCameras(1)"> SIGNALÉES SEULEMENT</label>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="ph">
+        <div class="pt">// LISTE</div>
+        <div style="font-size:10px;color:var(--dim)" id="cams-pageinfo"></div>
+      </div>
+      <div class="tw">
+        <table>
+          <thead><tr>
+            <th>ID</th><th>POSITION</th><th>TYPE</th><th>SOURCE</th>
+            <th>DIRECTION</th><th>SIGNALEMENTS</th><th></th>
+          </tr></thead>
+          <tbody id="cams-tbody"></tbody>
+        </table>
+      </div>
+      <div class="pag" id="cams-pag"></div>
+    </div>
   </div>
-  <div id="log"></div>
-</div>
+
+  <!-- ══ SIGNALEMENTS ══ -->
+  <div class="section" id="section-reports">
+    <div class="sec-head">
+      <div><div class="sec-title">// SIGNALEMENTS</div><div class="sec-sub">Caméras signalées par les utilisateurs</div></div>
+      <button class="danger" onclick="deleteAllReported()">✕ SUPPRIMER TOUT</button>
+    </div>
+    <div class="panel">
+      <div class="tw">
+        <table>
+          <thead><tr>
+            <th>ID</th><th>POSITION</th><th>TYPE</th><th>SOURCE</th><th>NOM/NOTE</th><th>SIGNALEMENTS</th><th></th>
+          </tr></thead>
+          <tbody id="rep-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ EXPORT OSM ══ -->
+  <div class="section" id="section-export">
+    <div class="sec-head">
+      <div><div class="sec-title">// EXPORT OSM</div><div class="sec-sub">Contribuer les caméras communautaires à OpenStreetMap</div></div>
+    </div>
+    <div class="infobox">
+      L'export inclut uniquement les caméras <span>communautaires</span> (source=user) avec <span>0 signalement</span>.<br>
+      Ouvrir le fichier .osm dans <span>JOSM</span> → vérifier → upload vers OpenStreetMap.<br>
+      Tags générés : <span>man_made=surveillance, camera:type, direction</span> (si disponible), note, source=survey.
+    </div>
+    <div class="cards" style="grid-template-columns:repeat(3,1fr);">
+      <div class="card"><div class="cn amber" id="ex-count">—</div><div class="cl">À EXPORTER</div></div>
+      <div class="card"><div class="cn" id="ex-dir">—</div><div class="cl">AVEC DIRECTION</div></div>
+      <div class="card"><div class="cn red" id="ex-excl">—</div><div class="cl">EXCLUES (SIGNALÉES)</div></div>
+    </div>
+    <button class="amber" onclick="downloadExport()" style="padding:10px 22px;letter-spacing:2px;font-size:11px;">⬇ TÉLÉCHARGER .OSM</button>
+  </div>
+
+  <!-- ══ ACTIONS ══ -->
+  <div class="section" id="section-actions">
+    <div class="sec-head">
+      <div><div class="sec-title">// ACTIONS SYSTÈME</div><div class="sec-sub">Opérations d'administration</div></div>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <div class="ph"><div class="pt">// DONNÉES OSM</div></div>
+        <div class="pb">
+          <p style="font-size:11px;color:var(--dim);margin-bottom:12px;line-height:1.9;">Re-importer toutes les caméras depuis Overpass API. Les caméras communautaires ne seront pas affectées.</p>
+          <button class="amber" onclick="doReseed()">⟳ RE-IMPORTER OSM</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="ph"><div class="pt">// CACHE ROUTES</div></div>
+        <div class="pb">
+          <p style="font-size:11px;color:var(--dim);margin-bottom:12px;line-height:1.9;">Vider le cache ORS en mémoire. Les prochaines requêtes seront recalculées depuis l'API ORS.</p>
+          <button class="cyan" onclick="doClearCache()">⌫ VIDER LE CACHE (<span id="cache-sz">—</span>)</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="ph"><div class="pt">// LOG</div></div>
+      <div class="log" id="act-log">▶ En attente d'action…</div>
+    </div>
+  </div>
+
+</div><!-- /content -->
 
 <div class="toast" id="toast"></div>
 
 <script>
-const api = (path, opts = {}) => {
-  const token = document.getElementById('token').value.trim();
-  return fetch(path, {
-    ...opts,
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers||{}) }
-  });
-};
+// ── API ──────────────────────────────────────────────────────────────────────
+const api = (path, opts = {}) => fetch(path, {
+  ...opts,
+  headers: {
+    'Authorization': `Bearer ${document.getElementById('token').value.trim()}`,
+    'Content-Type': 'application/json',
+    ...(opts.headers || {}),
+  },
+});
 
-function toast(msg) {
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function toast(msg, err = false) {
   const el = document.getElementById('toast');
-  el.textContent = msg; el.style.display = 'block';
-  setTimeout(() => el.style.display = 'none', 3000);
+  el.textContent = msg;
+  el.className = 'toast' + (err ? ' err' : '');
+  el.style.display = 'block';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.style.display = 'none', 3200);
 }
 
-function log(msg) {
-  const el = document.getElementById('log');
-  el.innerHTML += `<div>▶ ${msg}</div>`;
+// ── Log ───────────────────────────────────────────────────────────────────────
+function logLine(msg, cls = '') {
+  const el = document.getElementById('act-log');
+  const d = document.createElement('div');
+  d.className = cls;
+  d.textContent = `▶ ${msg}`;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
 }
 
+// ── Navigation ────────────────────────────────────────────────────────────────
+function goto(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('section-' + id).classList.add('active');
+  document.getElementById('nav-' + id).classList.add('active');
+  if (id === 'cameras') loadCameras(1);
+  if (id === 'reports') loadReports();
+  if (id === 'export')  loadExportStats();
+}
+
+// ── Load all ──────────────────────────────────────────────────────────────────
 async function loadAll() {
-  await Promise.all([loadStats(), loadReports()]);
-  ['stats-section','reports-section','actions-section'].forEach(id =>
-    document.getElementById(id).style.display = 'block');
-}
-
-async function loadStats() {
   const res = await api('/api/admin/stats');
-  if (!res.ok) { toast('⚠ Token invalide ou erreur'); return; }
+  const st = document.getElementById('tokst');
+  if (!res.ok) {
+    st.textContent = '✕ TOKEN INVALIDE'; st.className = 'tokst err';
+    toast('Token invalide', true); return;
+  }
+  st.textContent = '✓ AUTHENTIFIÉ'; st.className = 'tokst ok';
   const d = await res.json();
-  document.getElementById('stats-grid').innerHTML = `
-    <div class="stat"><div class="stat-n">${d.cameras_total}</div><div class="stat-l">CAMÉRAS</div></div>
-    <div class="stat"><div class="stat-n">${d.cameras_osm}</div><div class="stat-l">OSM</div></div>
-    <div class="stat"><div class="stat-n amber">${d.cameras_user}</div><div class="stat-l">COMMUNAUTÉ</div></div>
-    <div class="stat"><div class="stat-n red">${d.cameras_reported}</div><div class="stat-l">SIGNALÉES</div></div>
-    <div class="stat"><div class="stat-n">${d.route_cache_size}</div><div class="stat-l">CACHE ROUTES</div></div>
-  `;
+  renderDash(d);
+
+  const active = document.querySelector('.section.active')?.id.replace('section-','');
+  if (active === 'cameras') loadCameras(1);
+  if (active === 'reports') loadReports();
+  if (active === 'export')  loadExportStats();
 }
 
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+function renderDash(d) {
+  document.getElementById('dc-total').textContent = d.cameras_total ?? '—';
+  document.getElementById('dc-osm').textContent   = d.cameras_osm ?? '—';
+  document.getElementById('dc-user').textContent  = d.cameras_user ?? '—';
+  document.getElementById('dc-inf').textContent   = d.cameras_inferred ?? '—';
+  document.getElementById('dc-rep').textContent   = d.cameras_reported ?? '—';
+  document.getElementById('dc-cache').textContent = d.route_cache_size ?? '—';
+  document.getElementById('cache-sz').textContent = d.route_cache_size ?? '—';
+
+  const t = d.cameras_total || 1;
+  document.getElementById('chart-src').innerHTML =
+    bar('OSM',        d.cameras_osm      ?? 0, t, '') +
+    bar('COMMUNAUTÉ', d.cameras_user     ?? 0, t, 'amber') +
+    bar('INFÉRÉES',   d.cameras_inferred ?? 0, t, 'cyan');
+
+  document.getElementById('chart-typ').innerHTML =
+    bar('FIXE',     d.type_fixed   ?? 0, t, '') +
+    bar('PTZ/DÔME', d.type_ptz     ?? 0, t, 'amber') +
+    bar('INCONNUE', d.type_unknown ?? 0, t, 'cyan');
+
+  const badge = document.getElementById('nbadge-rep');
+  const nr = d.cameras_reported ?? 0;
+  badge.textContent = nr;
+  badge.classList.toggle('on', nr > 0);
+}
+
+function bar(label, v, total, cls) {
+  const pct = total > 0 ? Math.round(v / total * 100) : 0;
+  return `<div class="br">
+    <div class="bl">${label}</div>
+    <div class="bt"><div class="bf ${cls}" style="width:${pct}%"></div></div>
+    <div class="bv">${v} <span style="color:var(--dim);font-size:9px;">(${pct}%)</span></div>
+  </div>`;
+}
+
+// ── Camera list ───────────────────────────────────────────────────────────────
+let _camPage = 1;
+async function loadCameras(page = 1) {
+  _camPage = page;
+  const src = document.getElementById('f-src').value;
+  const typ = document.getElementById('f-type').value;
+  const rep = document.getElementById('f-rep').checked;
+  const p = new URLSearchParams({ page, limit: 50 });
+  if (src) p.set('source', src);
+  if (typ) p.set('cam_type', typ);
+  if (rep) p.set('reported', 'true');
+
+  const res = await api(`/api/admin/cameras?${p}`);
+  if (!res.ok) { toast('Erreur chargement', true); return; }
+  const d = await res.json();
+
+  document.getElementById('cams-sub').textContent     = `${d.total} caméra(s)`;
+  document.getElementById('cams-pageinfo').textContent = `Page ${d.page} / ${Math.max(1, d.pages)}`;
+
+  const tb = document.getElementById('cams-tbody');
+  if (!d.cameras.length) {
+    tb.innerHTML = `<tr><td colspan="8"><div class="empty">AUCUNE CAMÉRA</div></td></tr>`;
+  } else {
+    tb.innerHTML = d.cameras.map(c => `
+      <tr id="cr-${c.id}">
+        <td class="td-m">${c.id}</td>
+        <td class="td-d td-m">${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}</td>
+        <td><span class="bg ${c.cam_type}">${c.cam_type.toUpperCase()}</span></td>
+        <td><span class="bg ${c.source}">${c.source.toUpperCase()}</span></td>
+        <td class="td-d">${c.direction != null ? c.direction.toFixed(0)+'°' : '—'}</td>
+        <td style="${c.report_count > 0 ? 'color:var(--red);font-weight:bold' : 'color:var(--dim)'}">
+          ${c.report_count > 0 ? '⚠ ' : ''}${c.report_count}
+        </td>
+        <td>
+          <div style="display:flex;gap:4px;">
+            <a class="maplnk" href="/?lat=${c.lat}&lng=${c.lng}&z=18" target="_blank">🗺</a>
+            <button class="sm danger" onclick="deleteCamera(${c.id},'cr-${c.id}')">✕</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  // Pagination
+  const pag = document.getElementById('cams-pag');
+  const pages = Math.max(1, d.pages);
+  if (pages <= 1) { pag.innerHTML = ''; return; }
+  let h = `<button ${page <= 1 ? 'disabled' : ''} onclick="loadCameras(${page-1})">◀</button>`;
+  const s = Math.max(1, page-2), e = Math.min(pages, page+2);
+  for (let p2 = s; p2 <= e; p2++) {
+    const act = p2 === page ? 'style="border-color:var(--green);background:rgba(0,255,65,0.1)"' : '';
+    h += `<button ${act} onclick="loadCameras(${p2})">${p2}</button>`;
+  }
+  h += `<button ${page >= pages ? 'disabled' : ''} onclick="loadCameras(${page+1})">▶</button>`;
+  h += `<span class="pagi">— ${d.total} entrées</span>`;
+  pag.innerHTML = h;
+}
+
+function resetFilters() {
+  document.getElementById('f-src').value = '';
+  document.getElementById('f-type').value = '';
+  document.getElementById('f-rep').checked = false;
+  loadCameras(1);
+}
+
+// ── Signalements ──────────────────────────────────────────────────────────────
 async function loadReports() {
   const res = await api('/api/admin/reports');
-  if (!res.ok) return;
+  if (!res.ok) { toast('Erreur', true); return; }
   const cams = await res.json();
-  const container = document.getElementById('reports-container');
-  if (!cams.length) { container.innerHTML = '<div class="empty">Aucun signalement</div>'; return; }
-  container.innerHTML = `
-    <table>
-      <thead><tr><th>ID</th><th>POSITION</th><th>TYPE</th><th>SOURCE</th><th>SIGNALEMENTS</th><th></th></tr></thead>
-      <tbody>${cams.map(c => `
-        <tr id="row-${c.id}">
-          <td>${c.id}</td>
-          <td style="font-size:10px;color:var(--dim)">${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}</td>
-          <td>${c.cam_type}</td>
-          <td><span class="badge ${c.source}">${c.source.toUpperCase()}</span></td>
-          <td><span class="count-red">${c.report_count}</span></td>
-          <td>
-            <button class="danger" onclick="deleteCamera(${c.id})" style="padding:4px 10px;font-size:10px;">✕ SUPPRIMER</button>
-          </td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
-}
 
-async function deleteCamera(id) {
-  const res = await api(`/api/admin/cameras/${id}`, { method: 'DELETE' });
-  if (res.ok) {
-    document.getElementById(`row-${id}`)?.remove();
-    toast(`✓ Caméra ${id} supprimée`);
-    await loadStats();
-  } else {
-    toast('⚠ Erreur suppression');
+  const badge = document.getElementById('nbadge-rep');
+  badge.textContent = cams.length;
+  badge.classList.toggle('on', cams.length > 0);
+
+  const tb = document.getElementById('rep-tbody');
+  if (!cams.length) {
+    tb.innerHTML = `<tr><td colspan="7"><div class="empty">✓ AUCUN SIGNALEMENT</div></td></tr>`;
+    return;
   }
+  tb.innerHTML = cams.map(c => `
+    <tr id="rr-${c.id}">
+      <td class="td-m">${c.id}</td>
+      <td class="td-d td-m">${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}</td>
+      <td><span class="bg ${c.cam_type}">${c.cam_type.toUpperCase()}</span></td>
+      <td><span class="bg ${c.source}">${c.source.toUpperCase()}</span></td>
+      <td class="td-d" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;">${c.name || '—'}</td>
+      <td style="color:var(--red);font-weight:bold;">⚠ ${c.report_count}</td>
+      <td>
+        <div style="display:flex;gap:4px;">
+          <a class="maplnk" href="/?lat=${c.lat}&lng=${c.lng}&z=18" target="_blank">🗺</a>
+          <button class="sm danger" onclick="deleteCamera(${c.id},'rr-${c.id}',true)">✕</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
 }
 
 async function deleteAllReported() {
@@ -155,23 +516,74 @@ async function deleteAllReported() {
   const res = await api('/api/admin/reports');
   if (!res.ok) return;
   const cams = await res.json();
-  let count = 0;
+  let n = 0;
   for (const c of cams) {
     const r = await api(`/api/admin/cameras/${c.id}`, { method: 'DELETE' });
-    if (r.ok) count++;
+    if (r.ok) n++;
   }
-  toast(`✓ ${count} caméra(s) supprimée(s)`);
-  await loadAll();
+  toast(`✓ ${n} caméra(s) supprimée(s)`);
+  loadReports();
+  loadAll();
 }
 
-async function reseed() {
+// ── Delete ────────────────────────────────────────────────────────────────────
+async function deleteCamera(id, rowId, reloadRep = false) {
+  const res = await api(`/api/admin/cameras/${id}`, { method: 'DELETE' });
+  if (res.ok) {
+    document.getElementById(rowId)?.remove();
+    toast(`✓ Caméra ${id} supprimée`);
+    loadAll();
+    if (reloadRep) loadReports();
+  } else {
+    toast('⚠ Erreur suppression', true);
+  }
+}
+
+// ── Export OSM ────────────────────────────────────────────────────────────────
+async function loadExportStats() {
+  const res = await api('/api/admin/stats');
+  if (!res.ok) return;
+  const d = await res.json();
+  const userTotal    = d.cameras_user ?? 0;
+  const userReported = d.cameras_user_reported ?? 0;
+  document.getElementById('ex-count').textContent = userTotal - userReported;
+  document.getElementById('ex-dir').textContent   = d.cameras_with_direction ?? '—';
+  document.getElementById('ex-excl').textContent  = userReported;
+}
+
+async function downloadExport() {
+  const res = await api('/api/admin/export/osm');
+  if (!res.ok) { toast('Erreur export ou non autorisé', true); return; }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'blindspot-export.osm';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('✓ Export téléchargé');
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+async function doReseed() {
   if (!confirm('Re-importer toutes les caméras depuis OSM ? (peut prendre 30 s)')) return;
-  log('Import OSM en cours…');
+  logLine('Import OSM en cours…');
   const res = await api('/api/admin/reseed', { method: 'POST' });
   const d = await res.json();
-  if (res.ok) { log(`✓ ${d.message}`); await loadStats(); }
-  else log(`⚠ Erreur: ${d.error}`);
+  if (res.ok) { logLine(`✓ ${d.message}`, 'ok'); loadAll(); }
+  else logLine(`⚠ Erreur: ${d.error || res.status}`, 'err');
 }
+
+async function doClearCache() {
+  const res = await api('/api/admin/cache', { method: 'DELETE' });
+  if (res.ok) { logLine('✓ Cache routes vidé', 'ok'); loadAll(); }
+  else logLine('⚠ Erreur vider cache', 'err');
+}
+
+// ── Enter on token ────────────────────────────────────────────────────────────
+document.getElementById('token').addEventListener('keydown', e => {
+  if (e.key === 'Enter') loadAll();
+});
 </script>
 </body>
 </html>

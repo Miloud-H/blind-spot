@@ -64,4 +64,8 @@ impl RouteCache {
     pub async fn len(&self) -> usize {
         self.inner.read().await.len()
     }
+
+    pub async fn clear(&self) {
+        self.inner.write().await.clear();
+    }
 }
