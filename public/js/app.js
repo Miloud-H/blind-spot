@@ -218,7 +218,8 @@ function renderCamera(cam) {
                               '🗺 OSM'
     }</span></div>
     ${note ? `<div class="popup-row">Note: <span>${note}</span></div>` : ''}
-    <div class="popup-row" style="margin-top:6px;font-size:10px;color:var(--text-dim)">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>`;
+    <div class="popup-row" style="margin-top:6px;font-size:10px;color:var(--text-dim)">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
+    <button onclick="reportCamera(${id})" style="margin-top:8px;width:100%;padding:4px 8px;background:transparent;border:1px solid rgba(255,49,49,0.35);color:var(--red);font-size:9px;letter-spacing:1px;cursor:pointer;font-family:inherit;">⚠ SIGNALER COMME RETIRÉE</button>`;
   marker.bindPopup(popupHtml, { maxWidth: 220 });
   zoneLayers.forEach(p => p.on('click', () => marker.openPopup()));
   // Ne pas addTo(map) ici — géré par mountCamera
@@ -737,6 +738,79 @@ map.on('dragstart', () => {
   }
 });
 
+// ─── SIGNALEMENT CAMÉRA ─────────────────────────────────────
+async function reportCamera(id) {
+  try {
+    const res = await fetch(`/api/cameras/${id}/report`, { method: 'POST' });
+    if (res.ok) showToast('✓ Signalement enregistré — merci');
+    else        showToast('⚠ Erreur lors du signalement');
+  } catch { showToast('⚠ Erreur réseau'); }
+}
+
+// ─── HISTORIQUE DES TRAJETS ──────────────────────────────────
+const HISTORY_KEY = 'blindspot_history';
+const HISTORY_MAX = 10;
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function saveToHistory(entry) {
+  const list = loadHistory();
+  list.unshift({ ...entry, id: Date.now() });
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
+  renderHistory();
+}
+
+function deleteFromHistory(id) {
+  const list = loadHistory().filter(e => e.id !== id);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = loadHistory();
+  const section = document.getElementById('history-section');
+  const container = document.getElementById('history-list');
+  if (!list.length) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  container.innerHTML = list.map(e => {
+    const ago = timeAgo(e.id);
+    const dist = e.distKm < 1 ? `${Math.round(e.distKm * 1000)} m` : `${e.distKm.toFixed(2)} km`;
+    const dur  = `~${Math.ceil(e.durSec / 60)} min`;
+    const preset = e.preset !== 'standard' ? ` · ${e.preset}` : '';
+    return `<div class="history-item" onclick="restoreHistory(${e.id})">
+      <div class="history-badges">
+        <div class="history-badge a">A</div>
+        <div class="history-badge b">B</div>
+      </div>
+      <div class="history-info">
+        <div class="history-meta">${dist} · ${dur}${preset}</div>
+        <div class="history-sub">${ago}</div>
+      </div>
+      <button class="history-del" onclick="event.stopPropagation();deleteFromHistory(${e.id})" title="Supprimer">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function restoreHistory(id) {
+  const entry = loadHistory().find(e => e.id === id);
+  if (!entry) return;
+  setRoutePoint('start', { lat: entry.sLat, lng: entry.sLng });
+  setRoutePoint('end',   { lat: entry.eLat, lng: entry.eLng });
+  if (entry.preset) setPreset(entry.preset);
+  setTimeout(calculateRoute, 100);
+}
+
+function timeAgo(ts) {
+  const diff = Math.floor((Date.now() - ts) / 1000);
+  if (diff < 60)   return 'à l\'instant';
+  if (diff < 3600) return `il y a ${Math.floor(diff/60)} min`;
+  if (diff < 86400) return `il y a ${Math.floor(diff/3600)} h`;
+  return `il y a ${Math.floor(diff/86400)} j`;
+}
+
 // ─── URL SHARING ────────────────────────────────────────────
 function updateRouteHash() {
   const parts = [];
@@ -1005,6 +1079,15 @@ ${trkpts}
     document.getElementById('btn-gpx').href = URL.createObjectURL(blob);
     document.getElementById('nav-apps').style.display = 'block';
 
+    // Sauvegarder dans l'historique
+    saveToHistory({
+      sLat: routeStart.lat, sLng: routeStart.lng,
+      eLat: routeEnd.lat,   eLng: routeEnd.lng,
+      preset: rangePreset,
+      distKm: data.distance_km,
+      durSec: data.duration_sec,
+    });
+
     openMobilePanel(); // afficher les résultats sur mobile
 
     map.fitBounds(L.polyline(coords).getBounds(), { padding: [60, 60] });
@@ -1117,4 +1200,5 @@ map.on('zoomend', syncViewportDebounced);
 
 document.getElementById('geoloc-btn').addEventListener('click', locateUser);
 loadCameras();
+renderHistory();
 restoreFromHash();

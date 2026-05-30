@@ -33,7 +33,8 @@ pub struct AppState {
 #[derive(Clone)]
 pub struct Config {
     /// Clé API OpenRouteService — configurer via ORS_API_KEY dans .env
-    pub ors_api_key: String,
+    pub ors_api_key:   String,
+    pub admin_token:   String,
     pub port: u16,
 }
 
@@ -58,7 +59,8 @@ async fn main() -> anyhow::Result<()> {
     let database_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "sqlite:./blindspot.db".to_string());
     // Clé API ORS — optionnelle si le routing est géré côté frontend
-    let ors_api_key = env::var("ORS_API_KEY").unwrap_or_default();
+    let ors_api_key  = env::var("ORS_API_KEY").unwrap_or_default();
+    let admin_token  = env::var("ADMIN_TOKEN").unwrap_or_default();
     let port: u16 = env::var("PORT")
         .unwrap_or_else(|_| "3000".to_string())
         .parse()
@@ -126,7 +128,7 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let config = Config { ors_api_key, port };
+    let config = Config { ors_api_key, admin_token, port };
     let state = AppState {
         pool,
         http_client,
@@ -151,8 +153,12 @@ async fn main() -> anyhow::Result<()> {
             "/api/cameras",
             get(handlers::cameras::list).post(handlers::cameras::create),
         )
-        .route("/api/route", post(handlers::routing::calculate))
-        .route("/api/admin/seed", post(handlers::cameras::seed))
+        .route("/api/cameras/:id/report",  post(handlers::cameras::report))
+        .route("/api/route",               post(handlers::routing::calculate))
+        .route("/api/admin/stats",         get(handlers::admin::stats))
+        .route("/api/admin/reports",       get(handlers::admin::list_reports))
+        .route("/api/admin/cameras/:id",   axum::routing::delete(handlers::admin::delete_camera))
+        .route("/api/admin/reseed",        post(handlers::admin::reseed))
         .with_state(state)
         .layer(cors)
         .fallback_service(static_files);

@@ -233,6 +233,19 @@ select option { background: var(--surface2); }
 .geoloc-btn.geo-nofollow { background: rgba(0,184,212,0.08); border-color: rgba(0,184,212,0.45); box-shadow: 0 0 6px rgba(0,184,212,0.2); }
 @keyframes geo-pulse { 0%,100% { box-shadow: 0 0 8px rgba(0,184,212,0.4); } 50% { box-shadow: 0 0 20px rgba(0,184,212,0.8); } }
 
+/* HISTORY */
+.history-item { display:flex; align-items:center; gap:8px; padding:7px 10px; background:var(--surface2); border:1px solid var(--border); margin-bottom:4px; cursor:pointer; transition:border-color .15s; }
+.history-item:hover { border-color:rgba(0,255,65,0.4); }
+.history-badges { display:flex; gap:4px; flex-shrink:0; }
+.history-badge { width:16px; height:16px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-family:'Oxanium',sans-serif; font-weight:700; font-size:9px; flex-shrink:0; }
+.history-badge.a { background:#00ff41; color:#050a06; }
+.history-badge.b { background:#ff3131; color:#fff; }
+.history-info { flex:1; min-width:0; }
+.history-meta { font-size:10px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.history-sub  { font-size:9px; color:var(--text-dim); margin-top:1px; }
+.history-del  { background:transparent; border:none; color:var(--text-dim); cursor:pointer; font-size:12px; padding:2px 4px; flex-shrink:0; }
+.history-del:hover { color:var(--red); }
+
 /* EXPOSURE SCORE */
 .exposure-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
 .exposure-bar-wrap { height: 5px; background: var(--surface2); border: 1px solid var(--border); overflow: hidden; margin: 5px 0 4px; }

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BLINDSPOT // ADMIN</title>
+<style>
+  :root { --bg:#050a06; --surface:#0a120b; --surface2:#0f1d10; --green:#00ff41; --red:#ff3131; --amber:#ffb300; --text:#b8ffca; --dim:#5a8f65; --border:rgba(0,255,65,0.15); }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'Share Tech Mono',monospace; min-height:100vh; padding:24px; }
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+  h1 { color:var(--green); letter-spacing:4px; font-size:18px; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:24px; }
+  h1 span { color:var(--dim); }
+  .section { background:var(--surface); border:1px solid var(--border); padding:16px; margin-bottom:16px; }
+  .section-title { font-size:9px; letter-spacing:3px; color:var(--dim); margin-bottom:12px; }
+  .token-row { display:flex; gap:8px; }
+  input[type=text], input[type=password] { background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:8px 12px; font-family:inherit; font-size:13px; flex:1; outline:none; }
+  input:focus { border-color:var(--green); }
+  button { background:transparent; border:1px solid var(--green); color:var(--green); padding:8px 16px; font-family:inherit; font-size:11px; letter-spacing:2px; cursor:pointer; transition:all .15s; }
+  button:hover { background:rgba(0,255,65,0.08); }
+  button.danger { border-color:var(--red); color:var(--red); }
+  button.danger:hover { background:rgba(255,49,49,0.08); }
+  button.amber { border-color:var(--amber); color:var(--amber); }
+  button.amber:hover { background:rgba(255,179,0,0.08); }
+  .stats-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px; }
+  .stat { background:var(--surface2); padding:12px; text-align:center; }
+  .stat-n { font-size:28px; font-family:'Share Tech Mono',monospace; color:var(--green); }
+  .stat-l { font-size:9px; letter-spacing:2px; color:var(--dim); margin-top:2px; }
+  .stat-n.red { color:var(--red); }
+  .stat-n.amber { color:var(--amber); }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { text-align:left; font-size:9px; letter-spacing:2px; color:var(--dim); padding:6px 8px; border-bottom:1px solid var(--border); }
+  td { padding:7px 8px; border-bottom:1px solid rgba(0,255,65,0.06); vertical-align:middle; }
+  tr:hover td { background:rgba(0,255,65,0.03); }
+  .badge { display:inline-block; padding:2px 6px; font-size:9px; letter-spacing:1px; }
+  .badge.osm { border:1px solid var(--dim); color:var(--dim); }
+  .badge.user { border:1px solid var(--amber); color:var(--amber); }
+  .badge.inferred { border:1px solid rgba(0,184,212,0.5); color:#00b8d4; }
+  .count-red { color:var(--red); font-weight:bold; }
+  .toast { position:fixed; bottom:20px; right:20px; background:var(--surface2); border:1px solid var(--green); padding:10px 16px; font-size:12px; display:none; }
+  #log { font-size:11px; color:var(--dim); margin-top:10px; line-height:1.8; }
+  .empty { color:var(--dim); font-size:11px; text-align:center; padding:20px; }
+</style>
+</head>
+<body>
+<h1>BLIND<span>SPOT</span> // ADMIN</h1>
+
+<div class="section">
+  <div class="section-title">// AUTHENTIFICATION</div>
+  <div class="token-row">
+    <input type="password" id="token" placeholder="ADMIN_TOKEN" autocomplete="off">
+    <button onclick="loadAll()">▶ CHARGER</button>
+  </div>
+</div>
+
+<div class="section" id="stats-section" style="display:none">
+  <div class="section-title">// STATISTIQUES</div>
+  <div class="stats-grid" id="stats-grid"></div>
+</div>
+
+<div class="section" id="reports-section" style="display:none">
+  <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+    <span>// CAMÉRAS SIGNALÉES</span>
+    <button class="danger" onclick="deleteAllReported()">✕ SUPPRIMER TOUT</button>
+  </div>
+  <div id="reports-container"></div>
+</div>
+
+<div class="section" id="actions-section" style="display:none">
+  <div class="section-title">// ACTIONS</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <button class="amber" onclick="reseed()">⟳ RE-IMPORTER OSM</button>
+  </div>
+  <div id="log"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const api = (path, opts = {}) => {
+  const token = document.getElementById('token').value.trim();
+  return fetch(path, {
+    ...opts,
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers||{}) }
+  });
+};
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 3000);
+}
+
+function log(msg) {
+  const el = document.getElementById('log');
+  el.innerHTML += `<div>▶ ${msg}</div>`;
+}
+
+async function loadAll() {
+  await Promise.all([loadStats(), loadReports()]);
+  ['stats-section','reports-section','actions-section'].forEach(id =>
+    document.getElementById(id).style.display = 'block');
+}
+
+async function loadStats() {
+  const res = await api('/api/admin/stats');
+  if (!res.ok) { toast('⚠ Token invalide ou erreur'); return; }
+  const d = await res.json();
+  document.getElementById('stats-grid').innerHTML = `
+    <div class="stat"><div class="stat-n">${d.cameras_total}</div><div class="stat-l">CAMÉRAS</div></div>
+    <div class="stat"><div class="stat-n">${d.cameras_osm}</div><div class="stat-l">OSM</div></div>
+    <div class="stat"><div class="stat-n amber">${d.cameras_user}</div><div class="stat-l">COMMUNAUTÉ</div></div>
+    <div class="stat"><div class="stat-n red">${d.cameras_reported}</div><div class="stat-l">SIGNALÉES</div></div>
+    <div class="stat"><div class="stat-n">${d.route_cache_size}</div><div class="stat-l">CACHE ROUTES</div></div>
+  `;
+}
+
+async function loadReports() {
+  const res = await api('/api/admin/reports');
+  if (!res.ok) return;
+  const cams = await res.json();
+  const container = document.getElementById('reports-container');
+  if (!cams.length) { container.innerHTML = '<div class="empty">Aucun signalement</div>'; return; }
+  container.innerHTML = `
+    <table>
+      <thead><tr><th>ID</th><th>POSITION</th><th>TYPE</th><th>SOURCE</th><th>SIGNALEMENTS</th><th></th></tr></thead>
+      <tbody>${cams.map(c => `
+        <tr id="row-${c.id}">
+          <td>${c.id}</td>
+          <td style="font-size:10px;color:var(--dim)">${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}</td>
+          <td>${c.cam_type}</td>
+          <td><span class="badge ${c.source}">${c.source.toUpperCase()}</span></td>
+          <td><span class="count-red">${c.report_count}</span></td>
+          <td>
+            <button class="danger" onclick="deleteCamera(${c.id})" style="padding:4px 10px;font-size:10px;">✕ SUPPRIMER</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+async function deleteCamera(id) {
+  const res = await api(`/api/admin/cameras/${id}`, { method: 'DELETE' });
+  if (res.ok) {
+    document.getElementById(`row-${id}`)?.remove();
+    toast(`✓ Caméra ${id} supprimée`);
+    await loadStats();
+  } else {
+    toast('⚠ Erreur suppression');
+  }
+}
+
+async function deleteAllReported() {
+  if (!confirm('Supprimer toutes les caméras signalées ?')) return;
+  const res = await api('/api/admin/reports');
+  if (!res.ok) return;
+  const cams = await res.json();
+  let count = 0;
+  for (const c of cams) {
+    const r = await api(`/api/admin/cameras/${c.id}`, { method: 'DELETE' });
+    if (r.ok) count++;
+  }
+  toast(`✓ ${count} caméra(s) supprimée(s)`);
+  await loadAll();
+}
+
+async function reseed() {
+  if (!confirm('Re-importer toutes les caméras depuis OSM ? (peut prendre 30 s)')) return;
+  log('Import OSM en cours…');
+  const res = await api('/api/admin/reseed', { method: 'POST' });
+  const d = await res.json();
+  if (res.ok) { log(`✓ ${d.message}`); await loadStats(); }
+  else log(`⚠ Erreur: ${d.error}`);
+}
+</script>
+</body>
+</html>

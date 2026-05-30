@@ -11,6 +11,7 @@ pub enum AppError {
     External(String),
     BadRequest(String),
     NotFound,
+    Unauthorized,
 }
 
 impl IntoResponse for AppError {
@@ -25,7 +26,8 @@ impl IntoResponse for AppError {
                 (StatusCode::BAD_GATEWAY, format!("Service externe indisponible: {e}"))
             }
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            AppError::NotFound => (StatusCode::NOT_FOUND, "Ressource introuvable".to_string()),
+            AppError::NotFound       => (StatusCode::NOT_FOUND,        "Ressource introuvable".to_string()),
+            AppError::Unauthorized   => (StatusCode::UNAUTHORIZED,     "Token invalide".to_string()),
         };
         (status, Json(json!({ "error": message }))).into_response()
     }

@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -7,7 +7,6 @@ use crate::{
     db,
     error::AppError,
     models::{BboxQuery, Camera, CreateCameraRequest},
-    services::overpass,
     AppState,
 };
 
@@ -39,16 +38,24 @@ pub async fn create(
     ))
 }
 
-/// POST /api/admin/seed — importe les caméras OSM depuis Overpass
-pub async fn seed(State(state): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
-    let count = overpass::seed_from_overpass(&state.pool, &state.http_client)
-        .await
-        .map_err(|e| AppError::External(e.to_string()))?;
 
-    Ok(Json(serde_json::json!({
-        "seeded": count,
-        "message": format!("{count} caméras importées depuis OSM")
-    })))
+/// POST /api/cameras/:id/report — incrémente le compteur de signalements
+pub async fn report(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let affected = sqlx::query(
+        "UPDATE cameras SET report_count = report_count + 1 WHERE id = ?",
+    )
+    .bind(id)
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+
+    if affected == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(Json(serde_json::json!({ "message": "Signalement enregistré" })))
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

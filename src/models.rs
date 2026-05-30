@@ -60,6 +60,19 @@ pub struct LatLng {
     pub lng: f64,
 }
 
+// ── Admin ────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct ReportedCamera {
+    pub id:           i64,
+    pub lat:          f64,
+    pub lng:          f64,
+    pub cam_type:     String,
+    pub source:       String,
+    pub report_count: i64,
+    pub name:         Option<String>,
+}
+
 // ── Réponses HTTP ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
