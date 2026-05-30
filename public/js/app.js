@@ -19,6 +19,13 @@ let addMode = false;
 let loadedBbox  = null; // { s, w, n, e }
 const cameraIdSet = new Set();
 
+// ─── BÂTIMENTS — Line of Sight ───────────────────────────────
+let buildings        = [];          // [{pts:[[lat,lng]…]}]
+let buildingGrid     = null;        // Map<"r,c", number[]> index spatial
+let buildingLoadedBbox = null;
+const buildingOsmIds = new Set();
+const BGRID          = 0.001;       // ~110 m par cellule
+
 // ─── PORTÉE / PRESETS ───────────────────────────────────────
 // Portée de base (standard) par type de caméra, en mètres
 const BASE_RANGE = { fixed: 38, ptz: 28, unknown: 20 };
@@ -60,6 +67,124 @@ function buildCircle(lat, lng, rangeM, steps = 48) {
   const pts = [];
   for (let i = 0; i <= steps; i++) pts.push(destPoint(lat, lng, 360 * i / steps, rangeM));
   return pts;
+}
+
+// ─── VIEWSHED (Line of Sight) ────────────────────────────────
+
+function _buildGrid() {
+  const g = new Map();
+  for (let i = 0; i < buildings.length; i++) {
+    const b = buildings[i];
+    let r0 = Infinity, r1 = -Infinity, c0 = Infinity, c1 = -Infinity;
+    for (const [la, lo] of b.pts) {
+      if (la < r0) r0 = la; if (la > r1) r1 = la;
+      if (lo < c0) c0 = lo; if (lo > c1) c1 = lo;
+    }
+    for (let r = Math.floor(r0/BGRID); r <= Math.floor(r1/BGRID); r++)
+      for (let c = Math.floor(c0/BGRID); c <= Math.floor(c1/BGRID); c++) {
+        const k = `${r},${c}`;
+        if (!g.has(k)) g.set(k, []);
+        g.get(k).push(i);
+      }
+  }
+  return g;
+}
+
+function _nearBuildings(lat, lng, rangeM) {
+  if (!buildingGrid) return buildings;
+  const rd = rangeM / 111320 + BGRID;
+  const r0 = Math.floor((lat - rd) / BGRID), r1 = Math.floor((lat + rd) / BGRID);
+  const c0 = Math.floor((lng - rd) / BGRID), c1 = Math.floor((lng + rd) / BGRID);
+  const set = new Set();
+  for (let r = r0; r <= r1; r++)
+    for (let c = c0; c <= c1; c++) {
+      const cands = buildingGrid.get(`${r},${c}`);
+      if (cands) for (const i of cands) set.add(i);
+    }
+  return [...set].map(i => buildings[i]);
+}
+
+// t ∈ (0,1] si rayon A(ax,ay)→B(bx,by) coupe segment C→D, sinon null
+// coordonnées x=lng, y=lat
+function _raySegT(ax, ay, bx, by, cx, cy, dx, dy) {
+  const abx = bx-ax, aby = by-ay, cdx = dx-cx, cdy = dy-cy;
+  const den = abx*cdy - aby*cdx;
+  if (Math.abs(den) < 1e-15) return null;
+  const acx = cx-ax, acy = cy-ay;
+  const t = (acx*cdy - acy*cdx) / den;
+  const u = (acx*aby - acy*abx) / den;
+  return (t > 1e-9 && t <= 1 && u >= -1e-9 && u <= 1+1e-9) ? t : null;
+}
+
+function computeViewshed(lat, lng, rangeM, direction, fov, numRays = 120) {
+  const isPTZ = direction === null;
+  const a0 = isPTZ ? 0 : direction - fov / 2;
+  const a1 = isPTZ ? 360 : direction + fov / 2;
+  const step = (a1 - a0) / numRays;
+
+  const cosLat = Math.cos(toRad(lat));
+  const mLat = 111320, mLng = mLat * cosLat;
+  const cx = lng, cy = lat;
+  const near = _nearBuildings(lat, lng, rangeM * 1.05);
+
+  const pts = [[lat, lng]];
+  for (let i = 0; i <= numRays; i++) {
+    const rad = toRad(a0 + i * step);
+    const dx = Math.sin(rad) * rangeM / mLng;
+    const dy = Math.cos(rad) * rangeM / mLat;
+    const ex = cx + dx, ey = cy + dy;
+    let minT = 1.0;
+    for (const b of near) {
+      const p = b.pts;
+      for (let j = 0; j < p.length - 1; j++) {
+        // pts[j] = [lat, lng] → y=lat, x=lng
+        const t = _raySegT(cx, cy, ex, ey, p[j][1], p[j][0], p[j+1][1], p[j+1][0]);
+        if (t !== null && t < minT) minT = t;
+      }
+    }
+    pts.push([cy + dy * minT, cx + dx * minT]);
+  }
+  if (!isPTZ) pts.push([lat, lng]);
+  return pts;
+}
+
+async function loadBuildingsForBbox(s, w, n, e) {
+  // Pas de rechargement si la zone est déjà couverte
+  if (buildingLoadedBbox) {
+    const tol = 0.004;
+    const { s:bs, w:bw, n:bn, e:be } = buildingLoadedBbox;
+    if (s >= bs - tol && w >= bw - tol && n <= bn + tol && e <= be + tol) return;
+  }
+  const pad = 0.003;
+  const q = `[out:json][timeout:25];(way[building](${s-pad},${w-pad},${n+pad},${e+pad}););out geom;`;
+  try {
+    const res = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      body: `data=${encodeURIComponent(q)}`,
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    let added = 0;
+    for (const el of data.elements) {
+      if (!el.geometry || el.geometry.length < 3 || buildingOsmIds.has(el.id)) continue;
+      buildingOsmIds.add(el.id);
+      buildings.push({ pts: el.geometry.map(p => [p.lat, p.lon]) });
+      added++;
+    }
+    buildingLoadedBbox = {
+      s: Math.min(buildingLoadedBbox?.s ?? s, s),
+      w: Math.min(buildingLoadedBbox?.w ?? w, w),
+      n: Math.max(buildingLoadedBbox?.n ?? n, n),
+      e: Math.max(buildingLoadedBbox?.e ?? e, e),
+    };
+    if (added > 0) {
+      buildingGrid = _buildGrid();
+      // Réaffiche toutes les caméras visibles avec viewshed
+      for (const idx of [...renderedCameras.keys()]) unmountCamera(idx);
+      syncViewport();
+    }
+  } catch (_) { /* Overpass indisponible — formes simples conservées */ }
 }
 
 // Distance Haversine entre deux points (retourne des mètres)
@@ -150,17 +275,17 @@ function parseRange(val) { if (!val) return 30; const n = parseFloat(val); retur
 
 // ─── RENDER CAMERA ──────────────────────────────────────────
 // 3 zones concentriques : extérieure (étendue) → intérieure (réduite)
+// Rendu outer-first (high), inner-last (conservative = rouge, dessiné au dessus)
 const ZONE_STYLES = {
-  // Sur fond noir : vert=étendu, amber=standard, rouge=réduit
   fixed: [
-    { key: 'high',         fill: 'rgba(50,210,50,0.07)',  stroke: 'rgba(50,210,50,0.28)',  w: 0.5, dash: '4,6' },
-    { key: 'standard',     fill: 'rgba(255,165,0,0.14)',  stroke: 'rgba(255,165,0,0.48)',  w: 0.9, dash: null  },
-    { key: 'conservative', fill: 'rgba(255,40,40,0.24)',  stroke: 'rgba(255,40,40,0.68)',  w: 1.3, dash: null  },
+    { key: 'high',         fill: 'rgba(50,210,50,0.13)',  stroke: 'rgba(50,210,50,0.55)',  w: 0.8, dash: '4,6' },
+    { key: 'standard',     fill: 'rgba(255,165,0,0.26)',  stroke: 'rgba(255,165,0,0.72)',  w: 1.1, dash: null  },
+    { key: 'conservative', fill: 'rgba(255,40,40,0.38)',  stroke: 'rgba(255,40,40,0.88)',  w: 1.5, dash: null  },
   ],
   ptz: [
-    { key: 'high',         fill: 'rgba(50,210,50,0.06)',  stroke: 'rgba(50,210,50,0.22)',  w: 0.5, dash: '4,6' },
-    { key: 'standard',     fill: 'rgba(255,140,0,0.12)',  stroke: 'rgba(255,140,0,0.42)',  w: 0.8, dash: '3,4' },
-    { key: 'conservative', fill: 'rgba(255,100,0,0.20)',  stroke: 'rgba(255,100,0,0.60)',  w: 1.1, dash: '3,4' },
+    { key: 'high',         fill: 'rgba(50,210,50,0.11)',  stroke: 'rgba(50,210,50,0.48)',  w: 0.8, dash: '4,6' },
+    { key: 'standard',     fill: 'rgba(255,165,0,0.24)',  stroke: 'rgba(255,165,0,0.65)',  w: 1.1, dash: null  },
+    { key: 'conservative', fill: 'rgba(255,40,40,0.36)',  stroke: 'rgba(255,40,40,0.82)',  w: 1.4, dash: null  },
   ],
 };
 
@@ -181,12 +306,16 @@ function renderCamera(cam) {
     const opts = { fillColor: z.fill, fillOpacity: 1, color: z.stroke, weight: z.w, dashArray: z.dash };
 
     let poly;
-    if (isPTZ) {
-      poly = L.polygon(buildCircle(lat, lng, rangeM, 24), opts);
-    } else if (hasDir) {
-      poly = L.polygon(buildCone(lat, lng, direction, fov || 70, rangeM, 20), opts);
+    if (buildings.length > 0) {
+      // Viewshed LOS — zones arrêtées par les bâtiments
+      const vDir  = hasDir ? direction : null;
+      const vFov  = hasDir ? (fov || 70) : 360;
+      const nRays = isPTZ ? 180 : (hasDir ? Math.max(60, Math.round(vFov)) : 120);
+      poly = L.polygon(computeViewshed(lat, lng, rangeM, vDir, vFov, nRays), opts);
+    } else if (isPTZ || !hasDir) {
+      poly = L.polygon(buildCircle(lat, lng, rangeM, 36), opts);
     } else {
-      poly = L.circle([lat, lng], { radius: rangeM, ...opts });
+      poly = L.polygon(buildCone(lat, lng, direction, fov || 70, rangeM, 24), opts);
     }
     // Ne pas addTo(map) ici — géré par mountCamera
     zoneLayers.push(poly);
@@ -431,6 +560,9 @@ async function loadCamerasForBbox(s, w, n, e, isInitial = false) {
       updateList();
       _tryOpenHighlight();
     }
+
+    // Bâtiments en arrière-plan — déclenche un re-rendu avec LOS quand prêt
+    loadBuildingsForBbox(s, w, n, e);
 
     if (isInitial) {
       const osmCount = cameras.filter(c => c.source === 'osm').length;
@@ -1187,14 +1319,12 @@ setTimeout(() => map.invalidateSize(), 100);
 
 map.on('moveend', () => {
   syncViewportDebounced();
-  // Charger les caméras si on s'est déplacé hors de la zone déjà chargée
   const bounds = map.getBounds().pad(0.4);
-  if (viewportNeedsLoad(bounds)) {
-    loadCamerasForBbox(
-      bounds.getSouth(), bounds.getWest(),
-      bounds.getNorth(), bounds.getEast(),
-    );
-  }
+  const s = bounds.getSouth(), w = bounds.getWest();
+  const n = bounds.getNorth(), e = bounds.getEast();
+  if (viewportNeedsLoad(bounds)) loadCamerasForBbox(s, w, n, e);
+  // Bâtiments pour le LOS — même si les caméras sont déjà chargées
+  else loadBuildingsForBbox(s, w, n, e);
 });
 
 map.on('zoomend', syncViewportDebounced);
