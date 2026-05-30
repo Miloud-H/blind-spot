@@ -154,6 +154,26 @@ fn ray_seg_t(ax: f64, ay: f64, bx: f64, by: f64,
     }
 }
 
+/// Point-in-polygon pour les polygones de bâtiments stockés en format `[[lat, lng], …]`.
+/// Coordonnées internes : x = pts[i][1] (lng), y = pts[i][0] (lat).
+fn point_in_bld_pts(lng: f64, lat: f64, pts: &[[f64; 2]]) -> bool {
+    let n = pts.len();
+    if n < 3 { return false; }
+    let mut inside = false;
+    let mut j = n.saturating_sub(1);
+    for i in 0..n {
+        let (xi, yi) = (pts[i][1], pts[i][0]); // lng, lat
+        let (xj, yj) = (pts[j][1], pts[j][0]);
+        if ((yi > lat) != (yj > lat))
+            && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
 /// Calcule le viewshed d'une caméra par ray-casting contre des polygones de bâtiments.
 ///
 /// Retourne un ring GeoJSON `[[lng, lat], …]` fermé.
@@ -179,11 +199,14 @@ pub fn compute_viewshed(
     let m_lng = m_lat * cos_lat;
     let cx = lng; let cy = lat;
 
-    // Bâtiments proches — filtre bbox rapide
+    // Bâtiments proches — filtre bbox rapide, puis exclusion du bâtiment hôte
+    // (caméra posée sur un mur : on exclut le bâtiment qui contient la caméra
+    //  sinon les rayons se bloquent immédiatement sur le mur porteur).
     let range_deg = range_m / 111_320.0 + 0.0005;
     let near: Vec<&BuildingGeom> = buildings.iter().filter(|b| {
         b.max_lat >= lat - range_deg && b.min_lat <= lat + range_deg &&
-        b.max_lng >= lng - range_deg && b.min_lng <= lng + range_deg
+        b.max_lng >= lng - range_deg && b.min_lng <= lng + range_deg &&
+        !point_in_bld_pts(lng, lat, &b.pts) // exclure le bâtiment porteur
     }).collect();
 
     let mut pts = vec![[lng, lat]]; // GeoJSON [lng, lat]

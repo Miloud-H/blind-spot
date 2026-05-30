@@ -104,6 +104,20 @@ function _nearBuildings(lat, lng, rangeM) {
   return [...set].map(i => buildings[i]);
 }
 
+// Point-in-polygon pour pts = [[lat,lng],…] (format Leaflet/BuildingGeom)
+// x = pts[i][1] (lng), y = pts[i][0] (lat)
+function _ptInBldPts(lng, lat, pts) {
+  let inside = false, j = pts.length - 1;
+  for (let i = 0; i < pts.length; i++) {
+    const xi = pts[i][1], yi = pts[i][0];
+    const xj = pts[j][1], yj = pts[j][0];
+    if ((yi > lat) !== (yj > lat) && lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)
+      inside = !inside;
+    j = i;
+  }
+  return inside;
+}
+
 // t ∈ (0,1] si rayon A(ax,ay)→B(bx,by) coupe segment C→D, sinon null
 // coordonnées x=lng, y=lat
 function _raySegT(ax, ay, bx, by, cx, cy, dx, dy) {
@@ -125,7 +139,9 @@ function computeViewshed(lat, lng, rangeM, direction, fov, numRays = 120) {
   const cosLat = Math.cos(toRad(lat));
   const mLat = 111320, mLng = mLat * cosLat;
   const cx = lng, cy = lat;
-  const near = _nearBuildings(lat, lng, rangeM * 1.05);
+  // Exclure le bâtiment porteur (caméra posée sur un mur → rayons bloqués immédiatement)
+  const near = _nearBuildings(lat, lng, rangeM * 1.05)
+    .filter(b => !_ptInBldPts(lng, lat, b.pts));
 
   const pts = [[lat, lng]];
   for (let i = 0; i <= numRays; i++) {
