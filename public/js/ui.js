@@ -63,6 +63,7 @@ function setPreset(name) {
     document.getElementById(`preset-${p}`)?.classList.toggle('active', active);
     document.getElementById(`preset-${p}-p`)?.classList.toggle('active', active);
   });
+  rerenderCameras();
   const labels = { conservative: 'Évitement réduit — zones internes uniquement', standard: 'Évitement standard', high: 'Évitement maximal — zones étendues' };
   showToast(`◎ ${labels[name]}`);
   updateRouteHash();
