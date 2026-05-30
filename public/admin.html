@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BLINDSPOT // ADMIN</title>
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root {
   --bg:#050a06; --surface:#0a120b; --s2:#0f1d10; --s3:#141f15;
@@ -141,7 +143,10 @@ a.maplnk:hover{border-color:var(--bh);color:var(--text);}
 
 /* ── Modal ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:500;display:flex;align-items:center;justify-content:center;}
-.modal-panel{background:var(--surface);border:1px solid var(--green);width:360px;max-width:95vw;}
+.modal-panel{background:var(--surface);border:1px solid var(--green);width:500px;max-width:98vw;}
+#ed-map{height:240px;width:100%;background:var(--s2);margin-bottom:2px;}
+#ed-map .leaflet-container{background:#111;}
+.map-hint{font-size:9px;letter-spacing:1.5px;color:var(--dim);padding:3px 0 8px;text-align:center;}
 .modal-head{padding:9px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
 .modal-body{padding:14px;display:flex;flex-direction:column;gap:9px;}
 .field-row{display:flex;align-items:center;gap:8px;}
@@ -336,13 +341,15 @@ a.maplnk:hover{border-color:var(--bh);color:var(--text);}
       <button class="sm" onclick="closeEdit()">✕</button>
     </div>
     <div class="modal-body">
+      <div id="ed-map"></div>
+      <div class="map-hint">// GLISSER LE MARQUEUR · CLIQUER SUR LA CARTE</div>
       <div class="field-row">
         <label>LATITUDE</label>
-        <input type="number" id="ed-lat" step="0.00001" min="-90" max="90">
+        <input type="number" id="ed-lat" step="0.000001" min="-90" max="90" oninput="syncMarkerFromFields()">
       </div>
       <div class="field-row">
         <label>LONGITUDE</label>
-        <input type="number" id="ed-lng" step="0.00001" min="-180" max="180">
+        <input type="number" id="ed-lng" step="0.000001" min="-180" max="180" oninput="syncMarkerFromFields()">
       </div>
       <div class="field-row">
         <label>DIRECTION (°)</label>
@@ -478,7 +485,53 @@ function bar(label, v, total, cls) {
 
 // ── Edit modal ────────────────────────────────────────────────────────────────
 const _camMap = {};
-let _editId = null;
+let _editId   = null;
+let _editMap  = null;
+let _editMark = null;
+
+const _camIcon = () => L.divIcon({
+  html: '<div style="width:14px;height:14px;background:#00ff41;border:2px solid #050a06;border-radius:50%;box-shadow:0 0 6px #00ff41;cursor:grab"></div>',
+  iconSize: [14, 14], iconAnchor: [7, 7], className: '',
+});
+
+function _initEditMap(lat, lng) {
+  if (_editMap) {
+    _editMap.setView([lat, lng], 18);
+    _editMark.setLatLng([lat, lng]);
+    _editMap.invalidateSize();
+    return;
+  }
+  _editMap = L.map('ed-map', { zoomControl: true, attributionControl: false })
+              .setView([lat, lng], 18);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 21 })
+   .addTo(_editMap);
+
+  _editMark = L.marker([lat, lng], { draggable: true, icon: _camIcon() })
+               .addTo(_editMap);
+
+  _editMark.on('dragend', () => {
+    const p = _editMark.getLatLng();
+    document.getElementById('ed-lat').value = p.lat.toFixed(6);
+    document.getElementById('ed-lng').value = p.lng.toFixed(6);
+  });
+
+  // Clic sur la carte = déplacer le marqueur
+  _editMap.on('click', e => {
+    _editMark.setLatLng(e.latlng);
+    document.getElementById('ed-lat').value = e.latlng.lat.toFixed(6);
+    document.getElementById('ed-lng').value = e.latlng.lng.toFixed(6);
+  });
+}
+
+function syncMarkerFromFields() {
+  if (!_editMark) return;
+  const lat = parseFloat(document.getElementById('ed-lat').value);
+  const lng = parseFloat(document.getElementById('ed-lng').value);
+  if (!isNaN(lat) && !isNaN(lng)) {
+    _editMark.setLatLng([lat, lng]);
+    _editMap.panTo([lat, lng]);
+  }
+}
 
 function openEdit(id) {
   const cam = _camMap[id];
@@ -494,6 +547,8 @@ function openEdit(id) {
   document.getElementById('ed-name').value  = cam.name ?? '';
   document.getElementById('ed-note').value  = cam.note ?? '';
   document.getElementById('edit-modal').style.display = 'flex';
+  // Leaflet a besoin que le container soit visible avant d'initialiser
+  setTimeout(() => _initEditMap(cam.lat, cam.lng), 30);
 }
 
 function closeEdit(e) {
