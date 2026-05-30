@@ -7,7 +7,7 @@ use axum::{
 };
 use crate::{
     error::AppError,
-    models::{AdminCamerasQuery, Camera, ReportedCamera},
+    models::{AdminCamerasQuery, BulkDeleteRequest, Camera, ReportedCamera},
     services::overpass,
     AppState,
 };
@@ -132,6 +132,30 @@ pub async fn list_cameras(
         "limit":   limit,
         "pages":   ((total as f64) / (limit as f64)).ceil() as i64,
     })))
+}
+
+/// DELETE /api/admin/cameras — supprime une liste de caméras en un seul appel
+pub async fn delete_cameras_bulk(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<BulkDeleteRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_admin(&headers, &state.config.admin_token)?;
+
+    if body.ids.is_empty() {
+        return Ok(Json(serde_json::json!({ "deleted": 0 })));
+    }
+
+    let placeholders = body.ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!("DELETE FROM cameras WHERE id IN ({placeholders})");
+
+    let mut q = sqlx::query(&sql);
+    for id in &body.ids {
+        q = q.bind(id);
+    }
+
+    let affected = q.execute(&state.pool).await?.rows_affected();
+    Ok(Json(serde_json::json!({ "deleted": affected })))
 }
 
 /// DELETE /api/admin/cameras/:id — supprime une caméra

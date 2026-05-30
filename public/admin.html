@@ -516,14 +516,20 @@ async function deleteAllReported() {
   const res = await api('/api/admin/reports');
   if (!res.ok) return;
   const cams = await res.json();
-  let n = 0;
-  for (const c of cams) {
-    const r = await api(`/api/admin/cameras/${c.id}`, { method: 'DELETE' });
-    if (r.ok) n++;
+  if (!cams.length) { toast('Aucune caméra signalée'); return; }
+
+  const r = await api('/api/admin/cameras', {
+    method: 'DELETE',
+    body: JSON.stringify({ ids: cams.map(c => c.id) }),
+  });
+  if (r.ok) {
+    const d = await r.json();
+    toast(`✓ ${d.deleted} caméra(s) supprimée(s)`);
+    loadReports();
+    loadAll();
+  } else {
+    toast('⚠ Erreur suppression', true);
   }
-  toast(`✓ ${n} caméra(s) supprimée(s)`);
-  loadReports();
-  loadAll();
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────

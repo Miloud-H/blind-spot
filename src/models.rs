@@ -83,6 +83,11 @@ pub struct AdminCamerasQuery {
     pub reported: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct BulkDeleteRequest {
+    pub ids: Vec<i64>,
+}
+
 // ── Réponses HTTP ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
