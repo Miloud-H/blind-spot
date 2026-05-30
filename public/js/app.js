@@ -1115,6 +1115,31 @@ function clearRoute() {
   modeBadge.classList.remove('active');
 }
 
+// ── Géocodage d'adresse (Nominatim) ─────────────────────────────────────────
+async function geocodeAddr(type) {
+  const inputEl = document.getElementById(`addr-${type}`);
+  const q = inputEl.value.trim();
+  if (!q) return;
+  inputEl.disabled = true;
+  try {
+    // Bias vers Montréal (bounded=0 = soft preference, pas de restriction stricte)
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=ca&viewbox=-74.1,45.75,-73.2,45.35&bounded=0`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const results = await r.json();
+    if (!results.length) { showToast('⚠ Adresse introuvable'); return; }
+    const { lat, lon, display_name } = results[0];
+    const latlng = { lat: parseFloat(lat), lng: parseFloat(lon) };
+    setRoutePoint(type, latlng);
+    map.setView([latlng.lat, latlng.lng], 17);
+    // Afficher les deux premiers tokens (ex: "Rue Sainte-Catherine, Montréal")
+    inputEl.value = display_name.split(',').slice(0, 2).join(', ');
+  } catch {
+    showToast('⚠ Erreur de géocodage');
+  } finally {
+    inputEl.disabled = false;
+  }
+}
+
 // Main route calculation — délégué au backend Rust
 async function calculateRoute() {
   if (!routeStart || !routeEnd) {

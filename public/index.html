@@ -86,12 +86,22 @@
           <span class="route-coord" id="start-coord">Non défini</span>
           <button class="btn route-pick-btn" id="btn-set-start" title="Cliquer sur la carte">📍</button>
         </div>
+        <div class="addr-row">
+          <input type="text" id="addr-start" class="addr-input" placeholder="Adresse de départ…"
+                 onkeydown="if(event.key==='Enter')geocodeAddr('start')">
+          <button class="btn addr-btn" onclick="geocodeAddr('start')" title="Rechercher">→</button>
+        </div>
 
         <!-- End -->
         <div class="route-point">
           <div class="route-badge b">B</div>
           <span class="route-coord" id="end-coord">Non défini</span>
           <button class="btn route-pick-btn" id="btn-set-end" title="Cliquer sur la carte">📍</button>
+        </div>
+        <div class="addr-row">
+          <input type="text" id="addr-end" class="addr-input" placeholder="Adresse d'arrivée…"
+                 onkeydown="if(event.key==='Enter')geocodeAddr('end')">
+          <button class="btn addr-btn" onclick="geocodeAddr('end')" title="Rechercher">→</button>
         </div>
 
         <!-- Options -->

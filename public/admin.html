@@ -178,6 +178,9 @@ a.maplnk:hover{border-color:var(--bh);color:var(--text);}
     <div class="nav-item" onclick="goto('export')" id="nav-export">
       <span class="ico">⬇</span> EXPORT OSM
     </div>
+    <div class="nav-item" onclick="goto('zones')" id="nav-zones">
+      <span class="ico">◈</span> ZONES
+    </div>
     <div class="nav-item" onclick="goto('actions')" id="nav-actions">
       <span class="ico">⚙</span> ACTIONS
     </div>
@@ -300,6 +303,30 @@ a.maplnk:hover{border-color:var(--bh);color:var(--text);}
       <div class="card"><div class="cn red" id="ex-excl">—</div><div class="cl">EXCLUES (SIGNALÉES)</div></div>
     </div>
     <button class="amber" onclick="downloadExport()" style="padding:10px 22px;letter-spacing:2px;font-size:11px;">⬇ TÉLÉCHARGER .OSM</button>
+  </div>
+
+  <!-- ══ ZONES ══ -->
+  <div class="section" id="section-zones">
+    <div class="sec-head">
+      <div>
+        <div class="sec-title">// ZONES D'ÉVITEMENT</div>
+        <div class="sec-sub">Polygones fusionnés envoyés au moteur de routing (ORS)</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="ph"><div class="pt">// PARAMÈTRES</div></div>
+      <div class="pb" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+        <span style="font-size:9px;letter-spacing:1.5px;color:var(--dim);">PRESET</span>
+        <select id="z-preset" style="background:var(--s2);border:1px solid var(--border);color:var(--text);padding:5px 9px;font-family:inherit;font-size:11px;outline:none;">
+          <option value="conservative">RÉDUIT (×0.5)</option>
+          <option value="standard" selected>STANDARD (×1)</option>
+          <option value="high">MAXIMAL (×2.2)</option>
+        </select>
+        <button onclick="loadZones()">▶ CHARGER VUE ACTUELLE</button>
+        <span style="font-size:10px;color:var(--dim);" id="z-stats"></span>
+      </div>
+    </div>
+    <div id="z-map" style="height:65vh;border:1px solid var(--border);margin-bottom:14px;"></div>
   </div>
 
   <!-- ══ ACTIONS ══ -->
@@ -427,6 +454,7 @@ function goto(id) {
   if (id === 'cameras') loadCameras(1);
   if (id === 'reports') loadReports();
   if (id === 'export')  loadExportStats();
+  if (id === 'zones')   setTimeout(initZonesSection, 30);
 }
 
 // ── Load all ──────────────────────────────────────────────────────────────────
@@ -760,6 +788,63 @@ async function doClearCache() {
   const res = await api('/api/admin/cache', { method: 'DELETE' });
   if (res.ok) { logLine('✓ Cache routes vidé', 'ok'); loadAll(); }
   else logLine('⚠ Erreur vider cache', 'err');
+}
+
+// ── Zones d'évitement ─────────────────────────────────────────────────────────
+let _zonesMap    = null;
+let _zonesLayers = [];
+
+function initZonesSection() {
+  if (_zonesMap) { _zonesMap.invalidateSize(); return; }
+  _zonesMap = L.map('z-map', { attributionControl: false })
+               .setView([45.5231, -73.5982], 15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 })
+   .addTo(_zonesMap);
+  L.control.attribution({ prefix: '© OSM' }).addTo(_zonesMap);
+}
+
+async function loadZones() {
+  if (!_zonesMap) initZonesSection();
+  _zonesMap.invalidateSize();
+
+  const b = _zonesMap.getBounds();
+  const bbox = [
+    b.getSouth().toFixed(5), b.getWest().toFixed(5),
+    b.getNorth().toFixed(5), b.getEast().toFixed(5),
+  ].join(',');
+  const preset = document.getElementById('z-preset').value;
+
+  _zonesLayers.forEach(l => _zonesMap.removeLayer(l));
+  _zonesLayers = [];
+  document.getElementById('z-stats').textContent = '⟳ Chargement…';
+
+  const res = await api(`/api/admin/zones?bbox=${bbox}&preset=${preset}`);
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    toast(`⚠ ${d.error || 'Erreur zones'}`, true);
+    document.getElementById('z-stats').textContent = '';
+    return;
+  }
+  const data = await res.json();
+
+  document.getElementById('z-stats').textContent =
+    `${data.cameras_count} caméras → ${data.raw_count} brutes → ${data.merged_count} fusionnées`;
+
+  data.features.forEach(f => {
+    // GeoJSON [lng,lat] → Leaflet [lat,lng]
+    const coords = f.geometry.coordinates[0].map(([lng, lat]) => [lat, lng]);
+    const poly = L.polygon(coords, {
+      color: '#ff3131', fillColor: '#ff3131', weight: 1.2,
+      fillOpacity: 0.22, opacity: 0.85,
+    }).addTo(_zonesMap);
+    _zonesLayers.push(poly);
+  });
+
+  if (data.merged_count > 0) {
+    toast(`✓ ${data.merged_count} zone(s) affichée(s)`);
+  } else {
+    toast('⚠ Aucune zone dans cette vue');
+  }
 }
 
 // ── Enter on token ────────────────────────────────────────────────────────────

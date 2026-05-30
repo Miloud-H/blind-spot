@@ -115,6 +115,13 @@ pub struct UpdateCameraRequest {
     pub note:      Option<String>,
 }
 
+/// GET /api/admin/zones — zones d'évitement fusionnées pour la vue courante
+#[derive(Debug, Deserialize)]
+pub struct ZonesQuery {
+    pub bbox:   Option<String>,
+    pub preset: Option<String>,
+}
+
 // ── Réponses HTTP ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]

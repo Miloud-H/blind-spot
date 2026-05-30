@@ -172,6 +172,7 @@ async fn main() -> anyhow::Result<()> {
                                            .delete(handlers::admin::delete_cameras_bulk))
         .route("/api/admin/cameras/:id",   axum::routing::delete(handlers::admin::delete_camera)
                                            .patch(handlers::admin::update_camera))
+        .route("/api/admin/zones",         get(handlers::admin::zones))
         .route("/api/admin/export/osm",    get(handlers::admin::export_osm))
         .route("/api/admin/cache",         axum::routing::delete(handlers::admin::clear_cache))
         .route("/api/admin/reseed",        post(handlers::admin::reseed))

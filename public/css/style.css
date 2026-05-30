@@ -215,6 +215,23 @@ select option { background: var(--surface2); }
 }
 @keyframes pulseBtn { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
+.addr-row {
+  display: flex; gap: 5px; padding: 0 10px 8px; margin-top: -4px;
+}
+.addr-input {
+  flex: 1; min-width: 0;
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); padding: 5px 9px;
+  font-family: 'Share Tech Mono', monospace; font-size: 10px; outline: none;
+}
+.addr-input:focus { border-color: var(--green); }
+.addr-input::placeholder { color: var(--text-dim); opacity: 0.65; }
+.addr-input:disabled { opacity: 0.5; }
+.addr-btn {
+  width: auto !important; padding: 4px 11px !important;
+  font-size: 14px !important; letter-spacing: 0 !important; flex-shrink: 0;
+}
+
 .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; cursor: pointer; font-size: 11px; color: var(--text-dim); }
 .checkbox-row input[type="checkbox"] { width: auto; accent-color: var(--green); cursor: pointer; }
 .checkbox-row:hover { color: var(--text); }
