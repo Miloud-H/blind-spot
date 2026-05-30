@@ -202,10 +202,13 @@ const BUILD_ID:   &str = env!("GIT_HASH");
 
 async fn serve_index() -> impl IntoResponse {
     let html = INDEX_HTML
-        .replace(r#"href="/css/style.css""#,
-                 &format!(r#"href="/css/style.css?v={}""#, BUILD_ID))
-        .replace(r#"src="/js/app.js""#,
-                 &format!(r#"src="/js/app.js?v={}""#, BUILD_ID));
+        .replace(r#"href="/css/style.css""#,    &format!(r#"href="/css/style.css?v={}""#,    BUILD_ID))
+        .replace(r#"src="/js/app.js""#,         &format!(r#"src="/js/app.js?v={}""#,         BUILD_ID))
+        .replace(r#"src="/js/geo.js""#,         &format!(r#"src="/js/geo.js?v={}""#,         BUILD_ID))
+        .replace(r#"src="/js/viewshed.js""#,    &format!(r#"src="/js/viewshed.js?v={}""#,    BUILD_ID))
+        .replace(r#"src="/js/cameras.js""#,     &format!(r#"src="/js/cameras.js?v={}""#,     BUILD_ID))
+        .replace(r#"src="/js/routing.js""#,     &format!(r#"src="/js/routing.js?v={}""#,     BUILD_ID))
+        .replace(r#"src="/js/ui.js""#,          &format!(r#"src="/js/ui.js?v={}""#,          BUILD_ID));
 
     (
         [
