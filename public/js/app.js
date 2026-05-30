@@ -429,6 +429,7 @@ async function loadCamerasForBbox(s, w, n, e, isInitial = false) {
       syncViewport();
       updateStats();
       updateList();
+      _tryOpenHighlight();
     }
 
     if (isInitial) {
@@ -1198,7 +1199,46 @@ map.on('moveend', () => {
 
 map.on('zoomend', syncViewportDebounced);
 
+// ─── JUMP TO CAMERA (admin link ?lat=&lng=&z=&cam=) ─────────
+let _highlightCamId = null;
+
+function restoreFromQuery() {
+  const p = new URLSearchParams(location.search);
+  const lat = parseFloat(p.get('lat'));
+  const lng = parseFloat(p.get('lng'));
+  const z   = parseInt(p.get('z')) || 18;
+  const cam = parseInt(p.get('cam'));
+
+  if (isNaN(lat) || isNaN(lng)) return;
+
+  map.setView([lat, lng], z);
+
+  // Anneau pulsant pour indiquer la cible
+  const ring = L.circleMarker([lat, lng], {
+    radius: 20, color: '#00ff41', fill: false, weight: 2, opacity: 1,
+  }).addTo(map);
+  let op = 1;
+  const fade = setInterval(() => {
+    op -= 0.04;
+    ring.setStyle({ opacity: Math.max(0, op) });
+    if (op <= 0) { clearInterval(fade); map.removeLayer(ring); }
+  }, 80);
+
+  if (!isNaN(cam)) _highlightCamId = cam;
+}
+
+function _tryOpenHighlight() {
+  if (_highlightCamId === null) return;
+  const idx = cameras.findIndex(c => c.id === _highlightCamId);
+  if (idx === -1) return;
+  const entry = renderedCameras.get(idx);
+  if (!entry) return;
+  entry.marker.openPopup();
+  _highlightCamId = null;
+}
+
 document.getElementById('geoloc-btn').addEventListener('click', locateUser);
+restoreFromQuery(); // doit être avant loadCameras() pour que le viewport soit correct
 loadCameras();
 renderHistory();
 restoreFromHash();

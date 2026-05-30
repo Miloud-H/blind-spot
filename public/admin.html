@@ -448,7 +448,7 @@ async function loadCameras(page = 1) {
         </td>
         <td>
           <div style="display:flex;gap:4px;">
-            <a class="maplnk" href="/?lat=${c.lat}&lng=${c.lng}&z=18" target="_blank">🗺</a>
+            <a class="maplnk" href="/?lat=${c.lat}&lng=${c.lng}&z=18&cam=${c.id}" target="_blank">🗺</a>
             <button class="sm danger" onclick="deleteCamera(${c.id},'cr-${c.id}')">✕</button>
           </div>
         </td>
@@ -503,7 +503,7 @@ async function loadReports() {
       <td style="color:var(--red);font-weight:bold;">⚠ ${c.report_count}</td>
       <td>
         <div style="display:flex;gap:4px;">
-          <a class="maplnk" href="/?lat=${c.lat}&lng=${c.lng}&z=18" target="_blank">🗺</a>
+          <a class="maplnk" href="/?lat=${c.lat}&lng=${c.lng}&z=18&cam=${c.id}" target="_blank">🗺</a>
           <button class="sm danger" onclick="deleteCamera(${c.id},'rr-${c.id}',true)">✕</button>
         </div>
       </td>
