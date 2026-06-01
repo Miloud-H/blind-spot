@@ -1,7 +1,7 @@
 /// Client OpenRouteService (ORS) — routing piéton avec avoid_polygons.
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use crate::models::LatLng;
+use crate::models::{LatLng, RouteResult};
 
 // ── Erreur ORS ────────────────────────────────────────────────────────────────
 
@@ -52,49 +52,46 @@ struct OrsOptions {
     avoid_polygons: serde_json::Value,
 }
 
-// ── Réponse ───────────────────────────────────────────────────────────────────
+// ── Réponse (types privés — consommés dans get_route) ────────────────────────
 
 #[derive(Deserialize)]
-pub struct OrsResponse {
-    pub features: Vec<OrsFeature>,
+struct OrsResponse {
+    features: Vec<OrsFeature>,
 }
 
 #[derive(Deserialize)]
-pub struct OrsFeature {
-    pub geometry: OrsGeometry,
-    pub properties: OrsProperties,
+struct OrsFeature {
+    geometry:   OrsGeometry,
+    properties: OrsProperties,
 }
 
 #[derive(Deserialize)]
-pub struct OrsGeometry {
-    /// Coordonnées GeoJSON : [[lng, lat], ...]
-    pub coordinates: Vec<[f64; 2]>,
+struct OrsGeometry {
+    coordinates: Vec<[f64; 2]>,
 }
 
 #[derive(Deserialize)]
-pub struct OrsProperties {
-    pub summary: OrsSummary,
+struct OrsProperties {
+    summary: OrsSummary,
 }
 
 #[derive(Deserialize)]
-pub struct OrsSummary {
-    /// Distance en mètres
-    pub distance: f64,
-    /// Durée en secondes
-    pub duration: f64,
+struct OrsSummary {
+    distance: f64,  // mètres
+    duration: f64,  // secondes
 }
 
 // ── Appel API ─────────────────────────────────────────────────────────────────
 
-/// Calcule un itinéraire piéton.
+/// Calcule un itinéraire piéton via l'API ORS (publique ou self-hosted).
 /// `rings` : liste de rings GeoJSON [[lng,lat]...] (fermés) à éviter.
 pub async fn get_route(
-    client: &Client,
+    client:  &Client,
     api_key: &str,
-    start: LatLng,
-    end: LatLng,
-    rings: &[Vec<[f64; 2]>],
-) -> anyhow::Result<OrsResponse> {
+    start:   LatLng,
+    end:     LatLng,
+    rings:   &[Vec<[f64; 2]>],
+) -> anyhow::Result<RouteResult> {
     let body = OrsRequest {
         coordinates: vec![[start.lng, start.lat], [end.lng, end.lat]],
         options: if rings.is_empty() {
@@ -133,5 +130,11 @@ pub async fn get_route(
     }
 
     let resp = http_resp.json::<OrsResponse>().await?;
-    Ok(resp)
+    let f = resp.features.into_iter().next()
+        .ok_or_else(|| anyhow::anyhow!("ORS — réponse vide (0 features)"))?;
+    Ok(RouteResult {
+        coordinates:  f.geometry.coordinates,
+        distance_m:   f.properties.summary.distance,
+        duration_sec: f.properties.summary.duration,
+    })
 }

@@ -1,0 +1,48 @@
+services:
+
+  # ── Moteur de routing piéton (self-hosted, 0 fuite de données) ───────────────
+  # Premier démarrage : ~3-5 min pour construire les tiles depuis le PBF.
+  # Démarrages suivants : instantané (tiles en cache dans ./valhalla_data/).
+  #
+  # Setup initial :
+  #   mkdir valhalla_data
+  #   curl -L -o valhalla_data/montreal.osm.pbf \
+  #     "https://download.bbbike.org/osm/bbbike/Montreal/Montreal.osm.pbf"
+  #   docker compose up valhalla
+  valhalla:
+    image: ghcr.io/valhalla/valhalla:run-latest
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./valhalla_data:/custom_files
+    environment:
+      - use_tiles_ignore_pbf=True   # ne reconstruit pas si tiles déjà présents
+      - serve_tiles=True
+      - build_admins=False
+      - build_time_zones=False
+      - build_transit=False
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8002/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 120s  # laisse le temps au build initial
+
+  # ── API Blindspot ─────────────────────────────────────────────────────────────
+  # Décommenter et adapter si tu veux tout dans un seul docker compose.
+  # blindspot:
+  #   build: .
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - ./blindspot.db:/app/blindspot.db
+  #   environment:
+  #     - DATABASE_URL=sqlite:./blindspot.db
+  #     - VALHALLA_URL=http://valhalla:8002
+  #     - ADMIN_TOKEN=changeme
+  #     - PORT=3000
+  #   depends_on:
+  #     valhalla:
+  #       condition: service_healthy
+  #   restart: unless-stopped

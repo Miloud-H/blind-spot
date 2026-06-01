@@ -2,10 +2,10 @@ use axum::{extract::State, Json};
 use crate::{
     db, geo,
     error::AppError,
-    models::{DirectRoute, RouteRequest, RouteResponse},
+    models::{DirectRoute, LatLng, RouteRequest, RouteResponse, RouteResult},
     route_cache::RouteCache,
-    services::ors,
-    AppState,
+    services::{ors, valhalla},
+    AppState, Config,
 };
 
 /// POST /api/route
@@ -25,9 +25,9 @@ pub async fn calculate(
     validate_latlng(req.start.lat, req.start.lng)?;
     validate_latlng(req.end.lat, req.end.lng)?;
 
-    if state.config.ors_api_key.is_empty() {
+    if state.config.valhalla_url.is_empty() && state.config.ors_api_key.is_empty() {
         return Err(AppError::BadRequest(
-            "ORS_API_KEY non configurée — ajouter dans .env".into(),
+            "VALHALLA_URL ou ORS_API_KEY requis — configurer dans .env".into(),
         ));
     }
 
@@ -160,28 +160,19 @@ pub async fn calculate(
     const ORS_MARGIN: f64 = 1.15;
     let rings_ors = geo::add_ors_safety_margin(rings.clone(), ORS_MARGIN);
 
-    // ── 9. Route sûre — avec retry automatique si ORS 2010 ───────────────────
-    // ORS 2010 = "Route could not be found" (zone trop contrainte).
+    // ── 9. Route sûre — avec retry automatique si "no route" ────────────────
+    // ORS 2010 / Valhalla 442 = "Route could not be found" (zone trop contrainte).
     // Retry avec portée ×0.5 : zones d'exclusion réduites, chemin plus facile à trouver.
-    let (safe_resp, relaxed) = {
-        match ors::get_route(
-            &state.http_client,
-            &state.config.ors_api_key,
-            req.start,
-            req.end,
-            &rings_ors,
-        )
-        .await
-        {
+    let (safe_result, relaxed) = {
+        match call_router(&state.http_client, &state.config, req.start, req.end, &rings_ors).await {
             Ok(r) => (r, false),
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("2010") {
+                if is_no_route_error(&msg, &state.config) {
                     tracing::warn!(
-                        "ORS 2010 sur {} rings — retry avec preset×0.5",
+                        "Moteur routing : pas de route sur {} rings — retry avec preset×0.5",
                         rings.len()
                     );
-                    // Recalculer les rings avec portée réduite + marge
                     let rings_half = {
                         let raw = geo::cameras_to_ors_rings(&cameras, preset_mult * 0.5, &buildings);
                         let merged = geo::merge_overlapping_rings(raw);
@@ -190,9 +181,9 @@ pub async fn calculate(
                         );
                         geo::add_ors_safety_margin(filtered, ORS_MARGIN)
                     };
-                    let r2 = ors::get_route(
+                    let r2 = call_router(
                         &state.http_client,
-                        &state.config.ors_api_key,
+                        &state.config,
                         req.start,
                         req.end,
                         &rings_half,
@@ -200,11 +191,11 @@ pub async fn calculate(
                     .await
                     .map_err(|e2| {
                         AppError::External(format!(
-                            "ORS indisponible après 2 tentatives — {e2}"
+                            "Routing indisponible après 2 tentatives — {e2}"
                         ))
                     })?;
                     tracing::info!(
-                        "Retry ORS réussi avec {} rings (portée×0.5)",
+                        "Retry routing réussi avec {} rings (portée×0.5)",
                         rings_half.len()
                     );
                     (r2, true)
@@ -215,18 +206,9 @@ pub async fn calculate(
         }
     };
 
-    let safe_feature = &safe_resp.features[0];
-
     // ── 10. Exposition par segment ────────────────────────────────────────────
-    // Pour chaque segment de la route, on teste si le point passe dans la zone
-    // d'une caméra (avec le preset sélectionné). Retourné au frontend pour
-    // la coloration verte/rouge de la route et le score d'exposition précis.
     let segments = if avoid_cams {
-        geo::compute_segment_exposure(
-            &safe_feature.geometry.coordinates,
-            &cameras,
-            preset_mult,
-        )
+        geo::compute_segment_exposure(&safe_result.coordinates, &cameras, preset_mult)
     } else {
         vec![]
     };
@@ -242,26 +224,15 @@ pub async fn calculate(
 
     // ── 9. Route directe (optionnelle) ───────────────────────────────────────
     let direct_route = if include_direct && avoid_cams {
-        match ors::get_route(
-            &state.http_client,
-            &state.config.ors_api_key,
-            req.start,
-            req.end,
-            &[], // sans exclusions
-        )
-        .await
-        {
-            Ok(direct_resp) => {
-                let df = &direct_resp.features[0];
-                Some(DirectRoute {
-                    route: serde_json::json!({
-                        "type": "LineString",
-                        "coordinates": df.geometry.coordinates
-                    }),
-                    distance_km: df.properties.summary.distance / 1000.0,
-                    duration_sec: df.properties.summary.duration as u32,
-                })
-            }
+        match call_router(&state.http_client, &state.config, req.start, req.end, &[]).await {
+            Ok(dr) => Some(DirectRoute {
+                route: serde_json::json!({
+                    "type": "LineString",
+                    "coordinates": dr.coordinates
+                }),
+                distance_km:  dr.distance_m / 1000.0,
+                duration_sec: dr.duration_sec as u32,
+            }),
             Err(e) => {
                 tracing::warn!("Route directe indisponible: {e}");
                 None
@@ -274,10 +245,10 @@ pub async fn calculate(
     let response = RouteResponse {
         route: serde_json::json!({
             "type": "LineString",
-            "coordinates": safe_feature.geometry.coordinates
+            "coordinates": safe_result.coordinates
         }),
-        distance_km: safe_feature.properties.summary.distance / 1000.0,
-        duration_sec: safe_feature.properties.summary.duration as u32,
+        distance_km:  safe_result.distance_m / 1000.0,
+        duration_sec: safe_result.duration_sec as u32,
         cams_avoided: cams_count,
         relaxed,
         segments,
@@ -298,4 +269,30 @@ fn validate_latlng(lat: f64, lng: f64) -> Result<(), AppError> {
         )));
     }
     Ok(())
+}
+
+/// Dispatch vers Valhalla (self-hosted) ou ORS selon la config.
+/// Valhalla est prioritaire si VALHALLA_URL est défini.
+async fn call_router(
+    client: &reqwest::Client,
+    config: &Config,
+    start:  LatLng,
+    end:    LatLng,
+    rings:  &[Vec<[f64; 2]>],
+) -> anyhow::Result<RouteResult> {
+    if !config.valhalla_url.is_empty() {
+        valhalla::get_route(client, &config.valhalla_url, start, end, rings).await
+    } else {
+        ors::get_route(client, &config.ors_api_key, start, end, rings).await
+    }
+}
+
+/// Détermine si l'erreur signifie "pas de route trouvée" pour le moteur actif.
+/// ORS → code 2010 · Valhalla → code 442.
+fn is_no_route_error(msg: &str, config: &Config) -> bool {
+    if !config.valhalla_url.is_empty() {
+        msg.contains("442")
+    } else {
+        msg.contains("2010")
+    }
 }

@@ -122,6 +122,18 @@ pub struct ZonesQuery {
     pub preset: Option<String>,
 }
 
+// ── Résultat de routing (commun ORS + Valhalla) ──────────────────────────────
+
+/// Type de retour partagé entre les clients ORS et Valhalla.
+pub struct RouteResult {
+    /// Coordonnées GeoJSON [[lng, lat], …]
+    pub coordinates:  Vec<[f64; 2]>,
+    /// Distance en mètres
+    pub distance_m:   f64,
+    /// Durée en secondes
+    pub duration_sec: f64,
+}
+
 // ── Réponses HTTP ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]

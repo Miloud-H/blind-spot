@@ -36,10 +36,12 @@ pub struct AppState {
 
 #[derive(Clone)]
 pub struct Config {
-    /// Clé API OpenRouteService — configurer via ORS_API_KEY dans .env
+    /// URL Valhalla self-hosted — prioritaire sur ORS si défini (ex. http://localhost:8002)
+    pub valhalla_url:  String,
+    /// Clé API OpenRouteService — utilisée si VALHALLA_URL est vide
     pub ors_api_key:   String,
     pub admin_token:   String,
-    pub port: u16,
+    pub port:          u16,
 }
 
 // ── Point d'entrée ───────────────────────────────────────────────────────────
@@ -62,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
     // DATABASE_URL : sqlite:./blindspot.db par défaut (fichier local, zéro config)
     let database_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "sqlite:./blindspot.db".to_string());
-    // Clé API ORS — optionnelle si le routing est géré côté frontend
+    let valhalla_url = env::var("VALHALLA_URL").unwrap_or_default();
     let ors_api_key  = env::var("ORS_API_KEY").unwrap_or_default();
     let admin_token  = env::var("ADMIN_TOKEN").unwrap_or_default();
     let port: u16 = env::var("PORT")
@@ -81,8 +83,12 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!("./migrations").run(&pool).await?;
     tracing::info!("Migrations OK");
 
-    if ors_api_key.is_empty() {
-        tracing::warn!("ORS_API_KEY non configurée — endpoint /api/route désactivé");
+    if !valhalla_url.is_empty() {
+        tracing::info!("Routing via Valhalla self-hosted : {valhalla_url}");
+    } else if !ors_api_key.is_empty() {
+        tracing::info!("Routing via ORS (API publique)");
+    } else {
+        tracing::warn!("VALHALLA_URL et ORS_API_KEY absents — endpoint /api/route désactivé");
     }
 
     // Client HTTP partagé (seed + routing)
@@ -160,7 +166,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let config = Config { ors_api_key, admin_token, port };
+    let config = Config { valhalla_url, ors_api_key, admin_token, port };
     let state = AppState {
         pool,
         http_client,
