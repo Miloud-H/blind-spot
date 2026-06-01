@@ -128,14 +128,23 @@ pub async fn calculate(
 
     // ── 6. Rings d'exclusion ─────────────────────────────────────────────────
     let rings_raw = geo::cameras_to_ors_rings(&cameras, preset_mult, &buildings);
-    tracing::debug!("{} rings générés", rings_raw.len());
 
-    // ── 7. Filtrage endpoints ─────────────────────────────────────────────────
-    // Retire les rings qui contiennent le départ ou l'arrivée (erreur routing).
+    // ── 7. Fusion des polygones qui se chevauchent ───────────────────────────
+    // Nécessaire pour la performance Valhalla : O(arcs × polygones) par requête.
+    // Une rue avec N caméras proches devient un seul corridor à éviter.
+    // La précision individuelle est conservée côté affichage (homepage).
+    let rings_before = rings_raw.len();
+    let rings_merged = geo::merge_overlapping_rings(rings_raw);
+    tracing::debug!(
+        "{rings_before} rings → {} après fusion (perf Valhalla)",
+        rings_merged.len()
+    );
+
+    // ── 8. Filtrage endpoints ─────────────────────────────────────────────────
     let start_pt = (req.start.lng, req.start.lat);
     let end_pt   = (req.end.lng,   req.end.lat);
     let (rings, endpoint_removed) =
-        geo::filter_rings_containing_endpoints(rings_raw, start_pt, end_pt);
+        geo::filter_rings_containing_endpoints(rings_merged, start_pt, end_pt);
     if endpoint_removed > 0 {
         tracing::info!(
             "{endpoint_removed} ring(s) retirés (contenaient start ou end) — {} restants",
@@ -163,9 +172,10 @@ pub async fn calculate(
                         rings.len()
                     );
                     let rings_half = {
-                        let raw = geo::cameras_to_ors_rings(&cameras, preset_mult * 0.5, &buildings);
+                        let raw    = geo::cameras_to_ors_rings(&cameras, preset_mult * 0.5, &buildings);
+                        let merged = geo::merge_overlapping_rings(raw);
                         let (filtered, _) = geo::filter_rings_containing_endpoints(
-                            raw, start_pt, end_pt,
+                            merged, start_pt, end_pt,
                         );
                         geo::add_ors_safety_margin(filtered, ORS_MARGIN)
                     };
