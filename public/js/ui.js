@@ -71,6 +71,29 @@ function setPreset(name) {
 
 // ── Ajout caméra ──
 
+function placeCameraAt(latlng) {
+  const typeVal  = document.getElementById('cam-type').value;
+  const dirVal   = parseFloat(document.getElementById('cam-direction').value) || 0;
+  const fovVal   = parseFloat(document.getElementById('cam-fov').value)       || 70;
+  const rangeVal = parseFloat(document.getElementById('cam-range').value)     || 30;
+  const noteVal  = document.getElementById('cam-note').value.trim();
+  const cam = {
+    lat: latlng.lat, lng: latlng.lng,
+    direction: (typeVal === 'ptz' || typeVal === 'unknown') ? null : dirVal,
+    fov: fovVal, range: rangeVal, type: typeVal,
+    name: noteVal || 'Caméra communautaire', source: 'user', note: noteVal || null,
+  };
+  cameras.push(cam);
+  mountCamera(cam, cameras.length - 1);
+  persistCamera(cam);
+  userCameraCount++; updateStats(); updateList();
+  addMode = false; stopOrientTracking();
+  map.getContainer().style.cursor = ''; modeBadge.classList.remove('active');
+  btnAdd.style.display = 'block'; btnCancel.style.display = 'none';
+  document.getElementById('cam-note').value = '';
+  showToast('✓ Caméra ajoutée');
+}
+
 btnAdd.addEventListener('click', () => {
   addMode = true;
   routePickMode = null; clearPickButtons();
@@ -179,7 +202,10 @@ function _updateGeoMarkers(lat, lng, accuracy) {
     radius: 7, color: '#fff', fillColor: '#00b8d4', fillOpacity: 1, weight: 2,
   }).addTo(map);
   userLocCircle.bindPopup(`<div class="popup-title">📍 Votre position</div><div class="popup-row">Précision: <span>±${Math.round(accuracy)} m</span></div>`);
-  userLocDot.on('click', () => userLocCircle.openPopup());
+  userLocDot.on('click', () => {
+    if (addMode) placeCameraAt(userLocDot.getLatLng());
+    else         userLocCircle.openPopup();
+  });
 }
 
 function _geoSetBtn(state) {
@@ -188,6 +214,8 @@ function _geoSetBtn(state) {
   if (state === 'locating') btn.classList.add('locating');
   else if (state === 'follow')   btn.classList.add('geo-follow');
   else if (state === 'nofollow') btn.classList.add('geo-nofollow');
+  const hereBtn = document.getElementById('btn-add-here');
+  if (hereBtn) hereBtn.style.display = (state === 'follow' || state === 'nofollow') ? 'block' : 'none';
 }
 
 function _stopGeoWatch() {
@@ -269,26 +297,7 @@ map.on('click', e => {
   } else if (routePickMode === 'end') {
     setRoutePoint('end', e.latlng);
   } else if (addMode) {
-    const typeVal  = document.getElementById('cam-type').value;
-    const dirVal   = parseFloat(document.getElementById('cam-direction').value) || 0;
-    const fovVal   = parseFloat(document.getElementById('cam-fov').value)       || 70;
-    const rangeVal = parseFloat(document.getElementById('cam-range').value)     || 30;
-    const noteVal  = document.getElementById('cam-note').value.trim();
-    const cam = {
-      lat: e.latlng.lat, lng: e.latlng.lng,
-      direction: (typeVal === 'ptz' || typeVal === 'unknown') ? null : dirVal,
-      fov: fovVal, range: rangeVal, type: typeVal,
-      name: noteVal || 'Caméra communautaire', source: 'user', note: noteVal || null,
-    };
-    cameras.push(cam);
-    mountCamera(cam, cameras.length - 1);
-    persistCamera(cam);
-    userCameraCount++; updateStats(); updateList();
-    addMode = false; stopOrientTracking();
-    map.getContainer().style.cursor = ''; modeBadge.classList.remove('active');
-    btnAdd.style.display = 'block'; btnCancel.style.display = 'none';
-    document.getElementById('cam-note').value = '';
-    showToast('✓ Caméra ajoutée');
+    placeCameraAt(e.latlng);
   }
 });
 
@@ -348,6 +357,11 @@ function restoreFromQuery() {
 
 setTimeout(() => map.invalidateSize(), 100);
 document.getElementById('geoloc-btn').addEventListener('click', locateUser);
+document.getElementById('btn-add-here').addEventListener('click', () => {
+  if (!userLocDot) { showToast('⚠ Activer le GPS d\'abord'); return; }
+  switchTab('cams');
+  placeCameraAt(userLocDot.getLatLng());
+});
 restoreFromQuery();
 loadCameras();
 connectEventStream();
