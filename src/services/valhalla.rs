@@ -85,6 +85,7 @@ pub async fn get_route(
     let http_resp = client
         .post(&route_url)
         .header("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(20))
         .json(&body)
         .send()
         .await?;

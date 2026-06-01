@@ -78,7 +78,7 @@ pub async fn calculate(
     // Garde les caméras les plus proches du trajet direct (celles qui gêneront
     // réellement l'itinéraire). Limite de sécurité pour le temps de calcul
     // Valhalla — au-delà de ~300 polygones les performances se dégradent.
-    const MAX_ROUTE_POLYGONS: usize = 300;
+    const MAX_ROUTE_POLYGONS: usize = 150;
 
     let cameras = if cameras.len() > MAX_ROUTE_POLYGONS {
         tracing::debug!(
