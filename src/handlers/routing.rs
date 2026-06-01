@@ -1,4 +1,5 @@
 use axum::{extract::State, Json};
+use std::sync::atomic::Ordering;
 use crate::{
     db, geo,
     error::AppError,
@@ -113,13 +114,17 @@ pub async fn calculate(
 
     let preset = req.range_preset.as_deref().unwrap_or("standard");
 
-    // ── 5. Routeur A* maison (prioritaire si graphe disponible) ──────────────
-    let graph_edges = db::get_routing_edges_in_bbox(
-        &state.pool,
-        min_lat - margin, min_lng - margin,
-        max_lat + margin, max_lng + margin,
-        preset,
-    ).await.unwrap_or_default();
+    // ── 5. Routeur A* maison (uniquement si graphe complètement seedé) ────────
+    let graph_edges = if !state.routing_ready.load(Ordering::Relaxed) {
+        vec![] // seed en cours — utiliser le fallback
+    } else {
+        db::get_routing_edges_in_bbox(
+            &state.pool,
+            min_lat - margin, min_lng - margin,
+            max_lat + margin, max_lng + margin,
+            preset,
+        ).await.unwrap_or_default()
+    };
 
     if !graph_edges.is_empty() {
         tracing::debug!("{} arêtes chargées pour A*", graph_edges.len());

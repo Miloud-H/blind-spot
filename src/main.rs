@@ -6,6 +6,7 @@ use axum::{
     Json, Router,
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{env, str::FromStr};
 use tower_http::cors::{Any, CorsLayer};
@@ -28,11 +29,13 @@ pub type AppResult<T> = Result<T, AppError>;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub pool:        SqlitePool,
-    pub http_client: reqwest::Client,
-    pub config:      Config,
-    pub route_cache: route_cache::RouteCache,
-    pub event_bus:   tokio::sync::broadcast::Sender<String>,
+    pub pool:          SqlitePool,
+    pub http_client:   reqwest::Client,
+    pub config:        Config,
+    pub route_cache:   route_cache::RouteCache,
+    pub event_bus:     tokio::sync::broadcast::Sender<String>,
+    /// true quand le graphe routier A* est complètement seedé et prêt.
+    pub routing_ready: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -76,7 +79,9 @@ async fn main() -> anyhow::Result<()> {
     // Pool SQLite — create_if_missing=true pour créer le fichier automatiquement
     tracing::info!("Ouverture SQLite : {database_url}");
     let opts = SqliteConnectOptions::from_str(&database_url)?
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .pragma("busy_timeout", "10000"); // attend jusqu'à 10s si DB verrouillée
     let pool = SqlitePool::connect_with(opts).await?;
 
     // Migrations
@@ -111,6 +116,13 @@ async fn main() -> anyhow::Result<()> {
 
     let bld_count: i64   = db::count_buildings(&pool).await;
     let edge_count: i64  = db::count_routing_edges(&pool).await;
+    // Le graphe est "prêt" si le seed précédent s'est terminé avec succès
+    let graph_ready_persisted = db::get_metadata(&pool, "routing_graph_ready")
+        .await.ok().flatten().map(|v| v == "1").unwrap_or(false);
+    let routing_ready = Arc::new(AtomicBool::new(graph_ready_persisted && edge_count > 0));
+    if graph_ready_persisted && edge_count > 0 {
+        tracing::info!("Routeur A* disponible ({edge_count} arêtes)");
+    }
 
     // ── Seed caméras + bâtiments (conditionnel : base vide ou données > 7 jours) ─
     if should_seed {
@@ -150,21 +162,23 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // ── Seed graphe routier (indépendant — lancé si table vide) ──────────────
-    if edge_count == 0 {
+    if !graph_ready_persisted || edge_count == 0 {
         tracing::info!("Graphe routier vide — seed en arrière-plan…");
         let pool_bg   = pool.clone();
         let client_bg = http_client.clone();
+        let ready_flag = routing_ready.clone();
         tokio::spawn(async move {
             match services::routing_graph::seed_routing_graph(&pool_bg, &client_bg).await {
-                Ok((n, e)) => {
-                    tracing::info!("Graphe routier seedé : {n} nœuds, {e} arêtes");
-                    match services::routing_graph::compute_edge_exposures(&pool_bg).await {
-                        Ok(u)  => tracing::info!("Exposition calculée : {u} arêtes exposées"),
-                        Err(e) => tracing::warn!("Calcul exposition échoué : {e}"),
-                    }
-                }
-                Err(e) => tracing::warn!("Seed graphe routier échoué : {e}"),
+                Err(e) => { tracing::warn!("Seed graphe routier échoué : {e}"); return; }
+                Ok((n, e)) => tracing::info!("Graphe routier seedé : {n} nœuds, {e} arêtes"),
             }
+            match services::routing_graph::compute_edge_exposures(&pool_bg).await {
+                Err(e) => { tracing::warn!("Calcul exposition échoué : {e}"); return; }
+                Ok(u)  => tracing::info!("Exposition calculée : {u} arêtes exposées"),
+            }
+            let _ = db::set_metadata(&pool_bg, "routing_graph_ready", "1").await;
+            ready_flag.store(true, Ordering::Relaxed);
+            tracing::info!("Routeur A* prêt ✓");
         });
     } else {
         tracing::info!("{edge_count} arêtes routières en base — seed ignoré");
@@ -188,12 +202,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let config = Config { valhalla_url, ors_api_key, admin_token, port };
+    // routing_ready déjà initialisé plus haut
     let state = AppState {
         pool,
         http_client,
         config,
-        route_cache: route_cache::RouteCache::new(),
-        event_bus: event_tx,
+        route_cache:   route_cache::RouteCache::new(),
+        event_bus:     event_tx,
+        routing_ready,
     };
 
     // CORS — permissif pour le prototype (à restreindre en prod)
