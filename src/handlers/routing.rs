@@ -74,15 +74,15 @@ pub async fn calculate(
         _                    => 1.0, // "standard" ou absent
     };
 
-    // ── 4. Cap à MAX_ORS_POLYGONS — tri par proximité à la ligne directe ─────
-    // ORS accepte beaucoup de polygones, mais au-delà de ~150 le temps de calcul
-    // explose. On garde les caméras les plus proches de la ligne départ→arrivée
-    // (heuristique : celles qui gêneront réellement l'itinéraire).
-    const MAX_ORS_POLYGONS: usize = 150;
+    // ── 4. Cap par proximité à la ligne directe ──────────────────────────────
+    // Garde les caméras les plus proches du trajet direct (celles qui gêneront
+    // réellement l'itinéraire). Limite de sécurité pour le temps de calcul
+    // Valhalla — au-delà de ~300 polygones les performances se dégradent.
+    const MAX_ROUTE_POLYGONS: usize = 300;
 
-    let cameras = if cameras.len() > MAX_ORS_POLYGONS {
+    let cameras = if cameras.len() > MAX_ROUTE_POLYGONS {
         tracing::debug!(
-            "{} caméras dans la zone — cap à {MAX_ORS_POLYGONS} (tri par distance à la ligne directe)",
+            "{} caméras dans la zone — cap à {MAX_ROUTE_POLYGONS} (tri par distance à la ligne directe)",
             cameras.len()
         );
         let mut with_dist: Vec<(f64, crate::models::Camera)> = cameras
@@ -99,7 +99,7 @@ pub async fn calculate(
         with_dist.sort_unstable_by(|a, b| {
             a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)
         });
-        with_dist.into_iter().take(MAX_ORS_POLYGONS).map(|(_, c)| c).collect()
+        with_dist.into_iter().take(MAX_ROUTE_POLYGONS).map(|(_, c)| c).collect()
     } else {
         cameras
     };
@@ -126,26 +126,16 @@ pub async fn calculate(
     };
     tracing::debug!("{} bâtiments chargés pour le viewshed LOS", buildings.len());
 
-    // ── 6. Rings d'exclusion ORS ─────────────────────────────────────────────
+    // ── 6. Rings d'exclusion ─────────────────────────────────────────────────
     let rings_raw = geo::cameras_to_ors_rings(&cameras, preset_mult, &buildings);
-
-    // ── 7. Fusion des polygones qui se chevauchent ───────────────────────────
-    // Réduit le nombre de polygones envoyés à ORS dans les zones denses.
-    // Union-Find sur les bboxes + convex hull par cluster.
-    let rings_before = rings_raw.len();
-    let rings_merged = geo::merge_overlapping_rings(rings_raw);
-    tracing::debug!(
-        "Rings ORS : {rings_before} → {} après fusion des chevauchements",
-        rings_merged.len()
-    );
+    tracing::debug!("{} rings générés", rings_raw.len());
 
     // ── 7. Filtrage endpoints ─────────────────────────────────────────────────
-    // ORS erreur 2010 si start ou end est à l'intérieur d'un avoid_polygon.
-    // On retire ces rings (la caméra est trop proche — l'utilisateur l'accepte).
+    // Retire les rings qui contiennent le départ ou l'arrivée (erreur routing).
     let start_pt = (req.start.lng, req.start.lat);
     let end_pt   = (req.end.lng,   req.end.lat);
     let (rings, endpoint_removed) =
-        geo::filter_rings_containing_endpoints(rings_merged, start_pt, end_pt);
+        geo::filter_rings_containing_endpoints(rings_raw, start_pt, end_pt);
     if endpoint_removed > 0 {
         tracing::info!(
             "{endpoint_removed} ring(s) retirés (contenaient start ou end) — {} restants",
@@ -153,10 +143,9 @@ pub async fn calculate(
         );
     }
 
-    // ── 8. Marge de sécurité ORS ─────────────────────────────────────────────
-    // Les polygones sont agrandis de 15 % avant envoi à ORS pour compenser la
-    // discrétisation (cônes en 10 étapes ≠ arc parfait). L'affichage et le score
-    // d'exposition utilisent les rings originaux — seul ORS reçoit la version élargie.
+    // ── 8. Marge de sécurité ─────────────────────────────────────────────────
+    // Agrandit les polygones de 15 % pour compenser la discrétisation des arcs.
+    // L'affichage et le score d'exposition utilisent les rings originaux.
     const ORS_MARGIN: f64 = 1.15;
     let rings_ors = geo::add_ors_safety_margin(rings.clone(), ORS_MARGIN);
 
@@ -175,9 +164,8 @@ pub async fn calculate(
                     );
                     let rings_half = {
                         let raw = geo::cameras_to_ors_rings(&cameras, preset_mult * 0.5, &buildings);
-                        let merged = geo::merge_overlapping_rings(raw);
                         let (filtered, _) = geo::filter_rings_containing_endpoints(
-                            merged, start_pt, end_pt,
+                            raw, start_pt, end_pt,
                         );
                         geo::add_ors_safety_margin(filtered, ORS_MARGIN)
                     };
