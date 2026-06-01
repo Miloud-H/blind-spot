@@ -122,6 +122,25 @@ pub struct ZonesQuery {
     pub preset: Option<String>,
 }
 
+// ── Graphe routier ────────────────────────────────────────────────────────────
+
+/// Arête du graphe routier avec coordonnées des nœuds et exposition caméra.
+/// Retourné par `db::get_routing_edges_in_bbox` et `get_all_routing_edges_with_nodes`.
+#[derive(Debug, sqlx::FromRow)]
+pub struct GraphEdge {
+    pub id:          i64,
+    pub from_node:   i64,
+    pub to_node:     i64,
+    pub distance_m:  f64,
+    pub from_lat:    f64,
+    pub from_lng:    f64,
+    pub to_lat:      f64,
+    pub to_lng:      f64,
+    /// Exposition pour le preset sélectionné (0.0–1.0). NULL → 0.0 via default.
+    #[sqlx(default)]
+    pub exposure:    f64,
+}
+
 // ── Résultat de routing (commun ORS + Valhalla) ──────────────────────────────
 
 /// Type de retour partagé entre les clients ORS et Valhalla.

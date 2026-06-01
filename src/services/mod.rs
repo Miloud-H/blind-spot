@@ -3,3 +3,4 @@ pub mod ors;
 pub mod valhalla;
 pub mod inferred;
 pub mod buildings;
+pub mod routing_graph;

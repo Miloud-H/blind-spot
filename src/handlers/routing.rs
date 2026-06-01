@@ -4,6 +4,7 @@ use crate::{
     error::AppError,
     models::{DirectRoute, LatLng, RouteRequest, RouteResponse, RouteResult},
     route_cache::RouteCache,
+    routing::astar::AstarRouter,
     services::{ors, valhalla},
     AppState, Config,
 };
@@ -110,92 +111,98 @@ pub async fn calculate(
         req.range_preset.as_deref().unwrap_or("standard")
     );
 
-    // ── 5. Bâtiments pour le viewshed LOS ────────────────────────────────────
-    // Chargés depuis SQLite (seeded en arrière-plan au démarrage).
-    // Vide si seed pas encore terminé → fallback formes simples, transparent.
+    let preset = req.range_preset.as_deref().unwrap_or("standard");
+
+    // ── 5. Routeur A* maison (prioritaire si graphe disponible) ──────────────
+    let graph_edges = db::get_routing_edges_in_bbox(
+        &state.pool,
+        min_lat - margin, min_lng - margin,
+        max_lat + margin, max_lng + margin,
+        preset,
+    ).await.unwrap_or_default();
+
+    if !graph_edges.is_empty() {
+        tracing::debug!("{} arêtes chargées pour A*", graph_edges.len());
+
+        let router = AstarRouter::new(&graph_edges, avoid_cams);
+
+        let safe_result = router
+            .route(req.start.lat, req.start.lng, req.end.lat, req.end.lng)
+            .ok_or_else(|| AppError::External("A* : graphe déconnecté entre ces deux points".into()))?;
+
+        let segments = if avoid_cams {
+            geo::compute_segment_exposure(&safe_result.coordinates, &cameras, preset_mult)
+        } else {
+            vec![]
+        };
+
+        tracing::debug!(
+            "A* segments exposés : {}/{}",
+            segments.iter().filter(|&&e| e).count(), segments.len()
+        );
+
+        let direct_route = if include_direct && avoid_cams {
+            let direct_router = AstarRouter::new(&graph_edges, false);
+            direct_router.route(req.start.lat, req.start.lng, req.end.lat, req.end.lng)
+                .map(|dr| DirectRoute {
+                    route: serde_json::json!({"type":"LineString","coordinates": dr.coordinates}),
+                    distance_km:  dr.distance_m / 1000.0,
+                    duration_sec: dr.duration_sec as u32,
+                })
+        } else {
+            None
+        };
+
+        let response = RouteResponse {
+            route: serde_json::json!({"type":"LineString","coordinates": safe_result.coordinates}),
+            distance_km:  safe_result.distance_m / 1000.0,
+            duration_sec: safe_result.duration_sec as u32,
+            cams_avoided: cams_count,
+            relaxed: false,
+            segments,
+            direct_route,
+        };
+        state.route_cache.insert(cache_key, response.clone()).await;
+        return Ok(Json(response));
+    }
+
+    // ── 6. Fallback Valhalla / ORS (graphe non encore seedé) ─────────────────
+    tracing::debug!("Graphe routier vide — fallback Valhalla/ORS");
+
     let buildings = if avoid_cams {
         db::get_buildings_in_bbox(
             &state.pool,
             min_lat - margin, min_lng - margin,
             max_lat + margin, max_lng + margin,
-        )
-        .await
-        .unwrap_or_default()
+        ).await.unwrap_or_default()
     } else {
         vec![]
     };
-    tracing::debug!("{} bâtiments chargés pour le viewshed LOS", buildings.len());
 
-    // ── 6. Rings d'exclusion ─────────────────────────────────────────────────
-    let rings_raw = geo::cameras_to_ors_rings(&cameras, preset_mult, &buildings);
-
-    // ── 7. Fusion des polygones qui se chevauchent ───────────────────────────
-    // Nécessaire pour la performance Valhalla : O(arcs × polygones) par requête.
-    // Une rue avec N caméras proches devient un seul corridor à éviter.
-    // La précision individuelle est conservée côté affichage (homepage).
-    let rings_before = rings_raw.len();
+    let rings_raw    = geo::cameras_to_ors_rings(&cameras, preset_mult, &buildings);
     let rings_merged = geo::merge_overlapping_rings(rings_raw);
-    tracing::debug!(
-        "{rings_before} rings → {} après fusion (perf Valhalla)",
-        rings_merged.len()
-    );
-
-    // ── 8. Filtrage endpoints ─────────────────────────────────────────────────
     let start_pt = (req.start.lng, req.start.lat);
     let end_pt   = (req.end.lng,   req.end.lat);
-    let (rings, endpoint_removed) =
-        geo::filter_rings_containing_endpoints(rings_merged, start_pt, end_pt);
-    if endpoint_removed > 0 {
-        tracing::info!(
-            "{endpoint_removed} ring(s) retirés (contenaient start ou end) — {} restants",
-            rings.len()
-        );
-    }
+    let (rings, _) = geo::filter_rings_containing_endpoints(rings_merged, start_pt, end_pt);
 
-    // ── 8. Marge de sécurité ─────────────────────────────────────────────────
-    // Agrandit les polygones de 15 % pour compenser la discrétisation des arcs.
-    // L'affichage et le score d'exposition utilisent les rings originaux.
     const ORS_MARGIN: f64 = 1.15;
     let rings_ors = geo::add_ors_safety_margin(rings.clone(), ORS_MARGIN);
 
-    // ── 9. Route sûre — avec retry automatique si "no route" ────────────────
-    // ORS 2010 / Valhalla 442 = "Route could not be found" (zone trop contrainte).
-    // Retry avec portée ×0.5 : zones d'exclusion réduites, chemin plus facile à trouver.
     let (safe_result, relaxed) = {
         match call_router(&state.http_client, &state.config, req.start, req.end, &rings_ors).await {
             Ok(r) => (r, false),
             Err(e) => {
                 let msg = e.to_string();
                 if is_no_route_error(&msg, &state.config) {
-                    tracing::warn!(
-                        "Moteur routing : pas de route sur {} rings — retry avec preset×0.5",
-                        rings.len()
-                    );
                     let rings_half = {
                         let raw    = geo::cameras_to_ors_rings(&cameras, preset_mult * 0.5, &buildings);
                         let merged = geo::merge_overlapping_rings(raw);
-                        let (filtered, _) = geo::filter_rings_containing_endpoints(
-                            merged, start_pt, end_pt,
-                        );
-                        geo::add_ors_safety_margin(filtered, ORS_MARGIN)
+                        let (f, _) = geo::filter_rings_containing_endpoints(merged, start_pt, end_pt);
+                        geo::add_ors_safety_margin(f, ORS_MARGIN)
                     };
-                    let r2 = call_router(
-                        &state.http_client,
-                        &state.config,
-                        req.start,
-                        req.end,
-                        &rings_half,
-                    )
-                    .await
-                    .map_err(|e2| {
-                        AppError::External(format!(
-                            "Routing indisponible après 2 tentatives — {e2}"
-                        ))
-                    })?;
-                    tracing::info!(
-                        "Retry routing réussi avec {} rings (portée×0.5)",
-                        rings_half.len()
-                    );
+                    let r2 = call_router(&state.http_client, &state.config, req.start, req.end, &rings_half)
+                        .await
+                        .map_err(|e2| AppError::External(format!("Routing indisponible après 2 tentatives — {e2}")))?;
                     (r2, true)
                 } else {
                     return Err(AppError::External(msg));
@@ -204,47 +211,27 @@ pub async fn calculate(
         }
     };
 
-    // ── 10. Exposition par segment ────────────────────────────────────────────
     let segments = if avoid_cams {
         geo::compute_segment_exposure(&safe_result.coordinates, &cameras, preset_mult)
     } else {
         vec![]
     };
 
-    tracing::debug!(
-        "Segments exposés : {}/{} ({:.0}%)",
-        segments.iter().filter(|&&e| e).count(),
-        segments.len(),
-        if segments.is_empty() { 0.0 } else {
-            segments.iter().filter(|&&e| e).count() as f64 / segments.len() as f64 * 100.0
-        }
-    );
-
-    // ── 9. Route directe (optionnelle) ───────────────────────────────────────
     let direct_route = if include_direct && avoid_cams {
         match call_router(&state.http_client, &state.config, req.start, req.end, &[]).await {
             Ok(dr) => Some(DirectRoute {
-                route: serde_json::json!({
-                    "type": "LineString",
-                    "coordinates": dr.coordinates
-                }),
+                route: serde_json::json!({"type":"LineString","coordinates": dr.coordinates}),
                 distance_km:  dr.distance_m / 1000.0,
                 duration_sec: dr.duration_sec as u32,
             }),
-            Err(e) => {
-                tracing::warn!("Route directe indisponible: {e}");
-                None
-            }
+            Err(e) => { tracing::warn!("Route directe indisponible: {e}"); None }
         }
     } else {
         None
     };
 
     let response = RouteResponse {
-        route: serde_json::json!({
-            "type": "LineString",
-            "coordinates": safe_result.coordinates
-        }),
+        route: serde_json::json!({"type":"LineString","coordinates": safe_result.coordinates}),
         distance_km:  safe_result.distance_m / 1000.0,
         duration_sec: safe_result.duration_sec as u32,
         cams_avoided: cams_count,
@@ -252,11 +239,7 @@ pub async fn calculate(
         segments,
         direct_route,
     };
-
-    // ── Cache store ──────────────────────────────────────────────────────────
     state.route_cache.insert(cache_key, response.clone()).await;
-    tracing::debug!("Cache MISS → stocké ({} entrées)", state.route_cache.len().await);
-
     Ok(Json(response))
 }
 

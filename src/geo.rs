@@ -28,7 +28,7 @@ fn bearing_deg(lat1: f64, lng1: f64, lat2: f64, lng2: f64) -> f64 {
 
 /// Teste si un point (lat, lng) tombe dans la zone de surveillance d'une caméra.
 /// Miroir exact de `isPointInCameraZone` côté JavaScript (cone + cercle PTZ).
-fn point_in_single_camera_zone(lat: f64, lng: f64, cam: &Camera, preset_mult: f64) -> bool {
+pub fn point_in_camera_zone(lat: f64, lng: f64, cam: &Camera, preset_mult: f64) -> bool {
     let range = cam.range_m * preset_mult;
     let dist  = haversine_m(lat, lng, cam.lat, cam.lng);
     if dist > range * 1.15 { return false; } // rejet rapide
@@ -64,7 +64,7 @@ pub fn segment_in_camera_zone(
     cameras.iter().any(|cam| {
         check_pts
             .iter()
-            .any(|&(lat, lng)| point_in_single_camera_zone(lat, lng, cam, preset_mult))
+            .any(|&(lat, lng)| point_in_camera_zone(lat, lng, cam, preset_mult))
     })
 }
 

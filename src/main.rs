@@ -18,6 +18,7 @@ mod handlers;
 mod models;
 mod rate_limit;
 mod route_cache;
+mod routing;
 mod services;
 
 pub use error::AppError;
@@ -108,7 +109,8 @@ async fn main() -> anyhow::Result<()> {
     let days_old = db::days_since_osm_seed(&pool).await;
     let should_seed = cam_count == 0 || days_old >= 7;
 
-    let bld_count: i64 = db::count_buildings(&pool).await;
+    let bld_count: i64   = db::count_buildings(&pool).await;
+    let edge_count: i64  = db::count_routing_edges(&pool).await;
 
     if should_seed {
         if cam_count == 0 {
@@ -140,6 +142,22 @@ async fn main() -> anyhow::Result<()> {
                 }
             } else {
                 tracing::info!("{bld_count} bâtiments déjà en base — seed ignoré");
+            }
+            // 4. Graphe routier piéton + exposition caméras (seulement si table vide)
+            if edge_count == 0 {
+                tracing::info!("Graphe routier vide — seed en arrière-plan...");
+                match services::routing_graph::seed_routing_graph(&pool_bg, &client_bg).await {
+                    Ok((n, e)) => {
+                        tracing::info!("Graphe routier seedé : {n} nœuds, {e} arêtes");
+                        match services::routing_graph::compute_edge_exposures(&pool_bg).await {
+                            Ok(u)  => tracing::info!("Exposition calculée : {u} arêtes exposées"),
+                            Err(e) => tracing::warn!("Calcul exposition échoué : {e}"),
+                        }
+                    }
+                    Err(e) => tracing::warn!("Seed graphe routier échoué : {e}"),
+                }
+            } else {
+                tracing::info!("{edge_count} arêtes routières en base — seed ignoré");
             }
         });
     } else {
