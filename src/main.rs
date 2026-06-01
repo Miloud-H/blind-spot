@@ -112,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
     let bld_count: i64   = db::count_buildings(&pool).await;
     let edge_count: i64  = db::count_routing_edges(&pool).await;
 
+    // ── Seed caméras + bâtiments (conditionnel : base vide ou données > 7 jours) ─
     if should_seed {
         if cam_count == 0 {
             tracing::info!("Base OSM vide — import initial depuis Overpass en arrière-plan…");
@@ -124,40 +125,21 @@ async fn main() -> anyhow::Result<()> {
         let pool_bg   = pool.clone();
         let client_bg = http_client.clone();
         tokio::spawn(async move {
-            // 1. Caméras OSM (man_made=surveillance)
             match services::overpass::seed_from_overpass(&pool_bg, &client_bg).await {
                 Ok(n)  => tracing::info!("Seed OSM terminé : {n} caméras importées/mises à jour"),
                 Err(e) => tracing::warn!("Seed OSM échoué : {e}"),
             }
-            // 2. Caméras déduites (métro STM + postes de police)
             match services::inferred::seed_inferred_cameras(&pool_bg, &client_bg).await {
                 Ok(n)  => tracing::info!("Seed inféré terminé : {n} caméras déduites importées"),
                 Err(e) => tracing::warn!("Seed inféré échoué : {e}"),
             }
-            // 3. Bâtiments OSM pour le viewshed LOS (seulement si table vide)
             if bld_count == 0 {
                 match services::buildings::seed_buildings(&pool_bg, &client_bg).await {
                     Ok(n)  => tracing::info!("Seed bâtiments terminé : {n} bâtiments insérés"),
-                    Err(e) => tracing::warn!("Seed bâtiments échoué (routage en mode simplifié) : {e}"),
+                    Err(e) => tracing::warn!("Seed bâtiments échoué : {e}"),
                 }
             } else {
                 tracing::info!("{bld_count} bâtiments déjà en base — seed ignoré");
-            }
-            // 4. Graphe routier piéton + exposition caméras (seulement si table vide)
-            if edge_count == 0 {
-                tracing::info!("Graphe routier vide — seed en arrière-plan...");
-                match services::routing_graph::seed_routing_graph(&pool_bg, &client_bg).await {
-                    Ok((n, e)) => {
-                        tracing::info!("Graphe routier seedé : {n} nœuds, {e} arêtes");
-                        match services::routing_graph::compute_edge_exposures(&pool_bg).await {
-                            Ok(u)  => tracing::info!("Exposition calculée : {u} arêtes exposées"),
-                            Err(e) => tracing::warn!("Calcul exposition échoué : {e}"),
-                        }
-                    }
-                    Err(e) => tracing::warn!("Seed graphe routier échoué : {e}"),
-                }
-            } else {
-                tracing::info!("{edge_count} arêtes routières en base — seed ignoré");
             }
         });
     } else {
@@ -165,6 +147,27 @@ async fn main() -> anyhow::Result<()> {
             "{cam_count} caméras OSM en base (import il y a {} jour(s)) — seed ignoré",
             days_old
         );
+    }
+
+    // ── Seed graphe routier (indépendant — lancé si table vide) ──────────────
+    if edge_count == 0 {
+        tracing::info!("Graphe routier vide — seed en arrière-plan…");
+        let pool_bg   = pool.clone();
+        let client_bg = http_client.clone();
+        tokio::spawn(async move {
+            match services::routing_graph::seed_routing_graph(&pool_bg, &client_bg).await {
+                Ok((n, e)) => {
+                    tracing::info!("Graphe routier seedé : {n} nœuds, {e} arêtes");
+                    match services::routing_graph::compute_edge_exposures(&pool_bg).await {
+                        Ok(u)  => tracing::info!("Exposition calculée : {u} arêtes exposées"),
+                        Err(e) => tracing::warn!("Calcul exposition échoué : {e}"),
+                    }
+                }
+                Err(e) => tracing::warn!("Seed graphe routier échoué : {e}"),
+            }
+        });
+    } else {
+        tracing::info!("{edge_count} arêtes routières en base — seed ignoré");
     }
 
     // Canal d'événements WebSocket (capacité 64 — les clients lents droppent des events, pas grave)
