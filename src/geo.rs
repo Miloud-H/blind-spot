@@ -33,8 +33,8 @@ fn point_in_single_camera_zone(lat: f64, lng: f64, cam: &Camera, preset_mult: f6
     let dist  = haversine_m(lat, lng, cam.lat, cam.lng);
     if dist > range * 1.15 { return false; } // rejet rapide
 
-    let is_ptz = matches!(cam.cam_type.as_str(), "ptz" | "dome");
-    if is_ptz || cam.direction.is_none() {
+    let is_circular = matches!(cam.cam_type.as_str(), "ptz" | "dome" | "panoramic");
+    if is_circular || cam.direction.is_none() {
         return dist <= range;
     }
     // Caméra directionnelle : vérifier le cône
@@ -248,11 +248,11 @@ pub fn cameras_to_ors_rings(
 ) -> Vec<Vec<[f64; 2]>> {
     cameras.iter().map(|cam| {
         let range = cam.range_m * preset_mult;
-        let is_ptz = matches!(cam.cam_type.as_str(), "ptz" | "dome");
+        let is_circular = matches!(cam.cam_type.as_str(), "ptz" | "dome" | "panoramic");
 
         if buildings.is_empty() {
             // Pas de données bâtiments — formes simples (backward compatible)
-            return if is_ptz {
+            return if is_circular {
                 build_circle(cam.lat, cam.lng, range, 20)
             } else if let Some(dir) = cam.direction {
                 build_cone(cam.lat, cam.lng, dir, cam.fov, range, 10)
@@ -262,9 +262,9 @@ pub fn cameras_to_ors_rings(
         }
 
         // Viewshed LOS — polygone arrêté par les bâtiments
-        let direction = if is_ptz { None } else { cam.direction };
-        let fov       = if is_ptz { 360.0 } else { cam.fov };
-        let num_rays  = if is_ptz { 120 } else { (fov as usize).max(60) };
+        let direction = if is_circular { None } else { cam.direction };
+        let fov       = if is_circular { 360.0 } else { cam.fov };
+        let num_rays  = if is_circular { 120 } else { (fov as usize).max(60) };
         compute_viewshed(cam.lat, cam.lng, range, direction, fov, num_rays, buildings)
     }).collect()
 }
