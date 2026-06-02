@@ -5,11 +5,12 @@ use axum::{
     response::Response,
     Json,
 };
+use std::sync::atomic::Ordering;
 use crate::{
     db, geo,
     error::AppError,
     models::{AdminCamerasQuery, BulkDeleteRequest, Camera, ReportedCamera, UpdateCameraRequest, ZonesQuery},
-    services::overpass,
+    services::{overpass, routing_graph},
     AppState,
 };
 
@@ -393,5 +394,45 @@ pub async fn reseed(
     Ok(Json(serde_json::json!({
         "seeded": n,
         "message": format!("{n} caméras importées depuis OSM")
+    })))
+}
+
+/// POST /api/admin/reseed-graph — recrée le graphe routier depuis zéro en arrière-plan
+pub async fn reseed_graph(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_admin(&headers, &state.config.admin_token)?;
+
+    // Marque le graphe comme non-prêt immédiatement
+    state.routing_ready.store(false, Ordering::Relaxed);
+    let _ = db::set_metadata(&state.pool, "routing_graph_ready", "0").await;
+
+    // Vide les tables
+    sqlx::query("DELETE FROM routing_edges").execute(&state.pool).await
+        .map_err(|e| AppError::External(e.to_string()))?;
+    sqlx::query("DELETE FROM routing_nodes").execute(&state.pool).await
+        .map_err(|e| AppError::External(e.to_string()))?;
+
+    // Lance le seed en arrière-plan
+    let pool_bg   = state.pool.clone();
+    let client_bg = state.http_client.clone();
+    let ready_flag = state.routing_ready.clone();
+    tokio::spawn(async move {
+        match routing_graph::seed_routing_graph(&pool_bg, &client_bg).await {
+            Err(e) => { tracing::warn!("Seed graphe routier échoué : {e}"); return; }
+            Ok((n, e)) => tracing::info!("Graphe routier seedé : {n} nœuds, {e} arêtes"),
+        }
+        match routing_graph::compute_edge_exposures(&pool_bg).await {
+            Err(e) => { tracing::warn!("Calcul exposition échoué : {e}"); return; }
+            Ok(u)  => tracing::info!("Exposition calculée : {u} arêtes exposées"),
+        }
+        let _ = db::set_metadata(&pool_bg, "routing_graph_ready", "1").await;
+        ready_flag.store(true, Ordering::Relaxed);
+        tracing::info!("Routeur A* prêt ✓");
+    });
+
+    Ok(Json(serde_json::json!({
+        "message": "Re-seed du graphe routier lancé en arrière-plan (~2h)"
     })))
 }

@@ -257,6 +257,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/export/osm",    get(handlers::admin::export_osm))
         .route("/api/admin/cache",         axum::routing::delete(handlers::admin::clear_cache))
         .route("/api/admin/reseed",        post(handlers::admin::reseed))
+        .route("/api/admin/reseed-graph",  post(handlers::admin::reseed_graph))
         .with_state(state)
         .layer(cors)
         .fallback_service(static_files);

@@ -39,7 +39,7 @@ struct OsmPoint {
 pub async fn seed_routing_graph(pool: &SqlitePool, client: &Client) -> anyhow::Result<(u32, u32)> {
     let query = format!(
         r#"[out:json][timeout:90];
-way["highway"~"^(footway|path|pedestrian|steps|living_street|residential|service|unclassified|tertiary|secondary|primary)$"]["access"!="no"]["foot"!="no"]({MTL_BBOX});
+way["highway"~"^(footway|path|pedestrian|steps|living_street|residential|unclassified|tertiary|secondary|primary)$"]["access"!="no"]["access"!="private"]["access"!="customers"]["foot"!="no"]({MTL_BBOX});
 out geom;"#
     );
 
