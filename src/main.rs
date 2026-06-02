@@ -40,12 +40,10 @@ pub struct AppState {
 
 #[derive(Clone)]
 pub struct Config {
-    /// URL Valhalla self-hosted — prioritaire sur ORS si défini (ex. http://localhost:8002)
-    pub valhalla_url:  String,
-    /// Clé API OpenRouteService — utilisée si VALHALLA_URL est vide
-    pub ors_api_key:   String,
-    pub admin_token:   String,
-    pub port:          u16,
+    /// Clé API OpenRouteService — fallback si graphe A* non prêt
+    pub ors_api_key:  String,
+    pub admin_token:  String,
+    pub port:         u16,
 }
 
 // ── Point d'entrée ───────────────────────────────────────────────────────────
@@ -68,8 +66,7 @@ async fn main() -> anyhow::Result<()> {
     // DATABASE_URL : sqlite:./blindspot.db par défaut (fichier local, zéro config)
     let database_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "sqlite:./blindspot.db".to_string());
-    let valhalla_url = env::var("VALHALLA_URL").unwrap_or_default();
-    let ors_api_key  = env::var("ORS_API_KEY").unwrap_or_default();
+    let ors_api_key = env::var("ORS_API_KEY").unwrap_or_default();
     let admin_token  = env::var("ADMIN_TOKEN").unwrap_or_default();
     let port: u16 = env::var("PORT")
         .unwrap_or_else(|_| "3000".to_string())
@@ -89,12 +86,10 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!("./migrations").run(&pool).await?;
     tracing::info!("Migrations OK");
 
-    if !valhalla_url.is_empty() {
-        tracing::info!("Routing via Valhalla self-hosted : {valhalla_url}");
-    } else if !ors_api_key.is_empty() {
-        tracing::info!("Routing via ORS (API publique)");
+    if !ors_api_key.is_empty() {
+        tracing::info!("Fallback routing via ORS (API publique)");
     } else {
-        tracing::warn!("VALHALLA_URL et ORS_API_KEY absents — endpoint /api/route désactivé");
+        tracing::warn!("ORS_API_KEY absent — fallback routing désactivé (A* requis)");
     }
 
     // Client HTTP partagé (seed + routing)
@@ -201,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let config = Config { valhalla_url, ors_api_key, admin_token, port };
+    let config = Config { ors_api_key, admin_token, port };
     // routing_ready déjà initialisé plus haut
     let state = AppState {
         pool,

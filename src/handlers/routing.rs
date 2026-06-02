@@ -6,8 +6,8 @@ use crate::{
     models::{DirectRoute, LatLng, RouteRequest, RouteResponse, RouteResult},
     route_cache::RouteCache,
     routing::astar::AstarRouter,
-    services::{ors, valhalla},
-    AppState, Config,
+    services::ors,
+    AppState,
 };
 
 /// POST /api/route
@@ -27,9 +27,10 @@ pub async fn calculate(
     validate_latlng(req.start.lat, req.start.lng)?;
     validate_latlng(req.end.lat, req.end.lng)?;
 
-    if state.config.valhalla_url.is_empty() && state.config.ors_api_key.is_empty() {
+    // Sans graphe A* prêt, ORS est requis pour le fallback
+    if !state.routing_ready.load(Ordering::Relaxed) && state.config.ors_api_key.is_empty() {
         return Err(AppError::BadRequest(
-            "VALHALLA_URL ou ORS_API_KEY requis — configurer dans .env".into(),
+            "ORS_API_KEY requis tant que le graphe A* n'est pas seedé".into(),
         ));
     }
 
@@ -194,18 +195,18 @@ pub async fn calculate(
     let rings_ors = geo::add_ors_safety_margin(rings.clone(), ORS_MARGIN);
 
     let (safe_result, relaxed) = {
-        match call_router(&state.http_client, &state.config, req.start, req.end, &rings_ors).await {
+        match call_router(&state.http_client, &state.config.ors_api_key, req.start, req.end, &rings_ors).await {
             Ok(r) => (r, false),
             Err(e) => {
                 let msg = e.to_string();
-                if is_no_route_error(&msg, &state.config) {
+                if is_no_route_error(&msg) {
                     let rings_half = {
                         let raw    = geo::cameras_to_ors_rings(&cameras, preset_mult * 0.5, &buildings);
                         let merged = geo::merge_overlapping_rings(raw);
                         let (f, _) = geo::filter_rings_containing_endpoints(merged, start_pt, end_pt);
                         geo::add_ors_safety_margin(f, ORS_MARGIN)
                     };
-                    let r2 = call_router(&state.http_client, &state.config, req.start, req.end, &rings_half)
+                    let r2 = call_router(&state.http_client, &state.config.ors_api_key, req.start, req.end, &rings_half)
                         .await
                         .map_err(|e2| AppError::External(format!("Routing indisponible après 2 tentatives — {e2}")))?;
                     (r2, true)
@@ -223,7 +224,7 @@ pub async fn calculate(
     };
 
     let direct_route = if include_direct && avoid_cams {
-        match call_router(&state.http_client, &state.config, req.start, req.end, &[]).await {
+        match call_router(&state.http_client, &state.config.ors_api_key, req.start, req.end, &[]).await {
             Ok(dr) => Some(DirectRoute {
                 route: serde_json::json!({"type":"LineString","coordinates": dr.coordinates}),
                 distance_km:  dr.distance_m / 1000.0,
@@ -257,28 +258,16 @@ fn validate_latlng(lat: f64, lng: f64) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Dispatch vers Valhalla (self-hosted) ou ORS selon la config.
-/// Valhalla est prioritaire si VALHALLA_URL est défini.
 async fn call_router(
     client: &reqwest::Client,
-    config: &Config,
+    ors_key: &str,
     start:  LatLng,
     end:    LatLng,
     rings:  &[Vec<[f64; 2]>],
 ) -> anyhow::Result<RouteResult> {
-    if !config.valhalla_url.is_empty() {
-        valhalla::get_route(client, &config.valhalla_url, start, end, rings).await
-    } else {
-        ors::get_route(client, &config.ors_api_key, start, end, rings).await
-    }
+    ors::get_route(client, ors_key, start, end, rings).await
 }
 
-/// Détermine si l'erreur signifie "pas de route trouvée" pour le moteur actif.
-/// ORS → code 2010 · Valhalla → code 442.
-fn is_no_route_error(msg: &str, config: &Config) -> bool {
-    if !config.valhalla_url.is_empty() {
-        msg.contains("442")
-    } else {
-        msg.contains("2010")
-    }
+fn is_no_route_error(msg: &str) -> bool {
+    msg.contains("2010")
 }
