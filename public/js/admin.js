@@ -37,7 +37,6 @@ function goto(id) {
   if (id === 'cameras') loadCameras(1);
   if (id === 'reports') loadReports();
   if (id === 'export')  loadExportStats();
-  if (id === 'zones')   setTimeout(initZonesSection, 30);
 }
 
 // ── Load all ──────────────────────────────────────────────────────────────────
@@ -368,62 +367,6 @@ async function doClearCache() {
   const res = await api('/api/admin/cache', { method: 'DELETE' });
   if (res.ok) { logLine('✓ Cache routes vidé', 'ok'); loadAll(); }
   else logLine('⚠ Erreur vider cache', 'err');
-}
-
-// ── Zones d'évitement ─────────────────────────────────────────────────────────
-let _zonesMap    = null;
-let _zonesLayers = [];
-
-function initZonesSection() {
-  if (_zonesMap) { _zonesMap.invalidateSize(); return; }
-  _zonesMap = L.map('z-map', { attributionControl: false })
-               .setView([45.5231, -73.5982], 15);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 })
-   .addTo(_zonesMap);
-  L.control.attribution({ prefix: '© OSM' }).addTo(_zonesMap);
-}
-
-async function loadZones() {
-  if (!_zonesMap) initZonesSection();
-  _zonesMap.invalidateSize();
-
-  const b = _zonesMap.getBounds();
-  const bbox = [
-    b.getSouth().toFixed(5), b.getWest().toFixed(5),
-    b.getNorth().toFixed(5), b.getEast().toFixed(5),
-  ].join(',');
-  const preset = document.getElementById('z-preset').value;
-
-  _zonesLayers.forEach(l => _zonesMap.removeLayer(l));
-  _zonesLayers = [];
-  document.getElementById('z-stats').textContent = '⟳ Chargement…';
-
-  const res = await api(`/api/admin/zones?bbox=${bbox}&preset=${preset}`);
-  if (!res.ok) {
-    const d = await res.json().catch(() => ({}));
-    toast(`⚠ ${d.error || 'Erreur zones'}`, true);
-    document.getElementById('z-stats').textContent = '';
-    return;
-  }
-  const data = await res.json();
-
-  document.getElementById('z-stats').textContent =
-    `${data.cameras_count} caméras → ${data.raw_count} brutes → ${data.merged_count} fusionnées`;
-
-  data.features.forEach(f => {
-    const coords = f.geometry.coordinates[0].map(([lng, lat]) => [lat, lng]);
-    const poly = L.polygon(coords, {
-      color: '#ff3131', fillColor: '#ff3131', weight: 1.2,
-      fillOpacity: 0.22, opacity: 0.85,
-    }).addTo(_zonesMap);
-    _zonesLayers.push(poly);
-  });
-
-  if (data.merged_count > 0) {
-    toast(`✓ ${data.merged_count} zone(s) affichée(s)`);
-  } else {
-    toast('⚠ Aucune zone dans cette vue');
-  }
 }
 
 // ── Enter on token ────────────────────────────────────────────────────────────

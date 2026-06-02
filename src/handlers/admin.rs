@@ -7,9 +7,9 @@ use axum::{
 };
 use std::sync::atomic::Ordering;
 use crate::{
-    db, geo,
+    db,
     error::AppError,
-    models::{AdminCamerasQuery, BulkDeleteRequest, Camera, ReportedCamera, UpdateCameraRequest, ZonesQuery},
+    models::{AdminCamerasQuery, BulkDeleteRequest, Camera, ReportedCamera, UpdateCameraRequest},
     services::{overpass, routing_graph},
     AppState,
 };
@@ -310,64 +310,6 @@ pub async fn export_osm(
         .map_err(|e| AppError::External(e.to_string()))?;
 
     Ok(response)
-}
-
-/// GET /api/admin/zones?bbox=minLat,minLng,maxLat,maxLng&preset=standard
-/// Retourne les polygones fusionnés tels qu'envoyés à ORS pour la zone donnée.
-pub async fn zones(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(params): Query<ZonesQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
-    let bbox_str = params.bbox.as_deref().unwrap_or("");
-    let parts: Vec<f64> = bbox_str
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
-    if parts.len() != 4 {
-        return Err(AppError::BadRequest(
-            "bbox requis : minLat,minLng,maxLat,maxLng".into(),
-        ));
-    }
-    let (min_lat, min_lng, max_lat, max_lng) = (parts[0], parts[1], parts[2], parts[3]);
-
-    let preset_mult: f64 = match params.preset.as_deref() {
-        Some("conservative") => 0.5,
-        Some("high")         => 2.2,
-        _                    => 1.0,
-    };
-
-    let cameras = db::get_cameras_in_bbox(
-        &state.pool, min_lat, min_lng, max_lat, max_lng, None,
-    ).await?;
-
-    let buildings = db::get_buildings_in_bbox(
-        &state.pool, min_lat, min_lng, max_lat, max_lng,
-    ).await.unwrap_or_default();
-
-    let rings_raw    = geo::cameras_to_ors_rings(&cameras, preset_mult, &buildings);
-    let raw_count    = rings_raw.len();
-    let rings_merged = geo::merge_overlapping_rings(rings_raw);
-    let merged_count = rings_merged.len();
-
-    let features: Vec<serde_json::Value> = rings_merged
-        .iter()
-        .map(|ring| serde_json::json!({
-            "type": "Feature",
-            "geometry": { "type": "Polygon", "coordinates": [ring] },
-            "properties": {}
-        }))
-        .collect();
-
-    Ok(Json(serde_json::json!({
-        "type":          "FeatureCollection",
-        "features":      features,
-        "raw_count":     raw_count,
-        "merged_count":  merged_count,
-        "cameras_count": cameras.len(),
-    })))
 }
 
 /// DELETE /api/admin/cache — vide le cache de routes en mémoire

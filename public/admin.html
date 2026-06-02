@@ -31,9 +31,6 @@
     <div class="nav-item" onclick="goto('export')" id="nav-export">
       <span class="ico">⬇</span> EXPORT OSM
     </div>
-    <div class="nav-item" onclick="goto('zones')" id="nav-zones">
-      <span class="ico">◈</span> ZONES
-    </div>
     <div class="nav-item" onclick="goto('actions')" id="nav-actions">
       <span class="ico">⚙</span> ACTIONS
     </div>
@@ -156,30 +153,6 @@
       <div class="card"><div class="cn red" id="ex-excl">—</div><div class="cl">EXCLUES (SIGNALÉES)</div></div>
     </div>
     <button class="amber" onclick="downloadExport()" style="padding:10px 22px;letter-spacing:2px;font-size:11px;">⬇ TÉLÉCHARGER .OSM</button>
-  </div>
-
-  <!-- ══ ZONES ══ -->
-  <div class="section" id="section-zones">
-    <div class="sec-head">
-      <div>
-        <div class="sec-title">// ZONES D'ÉVITEMENT</div>
-        <div class="sec-sub">Polygones fusionnés envoyés au moteur de routing (ORS)</div>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="ph"><div class="pt">// PARAMÈTRES</div></div>
-      <div class="pb" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
-        <span style="font-size:9px;letter-spacing:1.5px;color:var(--dim);">PRESET</span>
-        <select id="z-preset" style="background:var(--s2);border:1px solid var(--border);color:var(--text);padding:5px 9px;font-family:inherit;font-size:11px;outline:none;">
-          <option value="conservative">RÉDUIT (×0.5)</option>
-          <option value="standard" selected>STANDARD (×1)</option>
-          <option value="high">MAXIMAL (×2.2)</option>
-        </select>
-        <button onclick="loadZones()">▶ CHARGER VUE ACTUELLE</button>
-        <span style="font-size:10px;color:var(--dim);" id="z-stats"></span>
-      </div>
-    </div>
-    <div id="z-map" style="height:65vh;border:1px solid var(--border);margin-bottom:14px;"></div>
   </div>
 
   <!-- ══ ACTIONS ══ -->
