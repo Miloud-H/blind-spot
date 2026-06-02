@@ -52,6 +52,9 @@
     <!-- Geoloc button -->
     <button class="geoloc-btn" id="geoloc-btn" title="Me localiser">📍</button>
 
+    <!-- Proximity alert button -->
+    <button class="geoloc-btn proximity-btn" id="btn-proximity" title="Alerte caméra" onclick="toggleProximityAlert()">📳</button>
+
     <!-- Route bar -->
     <div class="route-bar" id="route-bar" style="display:none;">
       <div class="rb-section">
@@ -303,6 +306,7 @@
 <script src="/js/cameras.js"></script>
 <script src="/js/routing.js"></script>
 <script src="/js/ui.js"></script>
+<script src="/js/proximity.js"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
