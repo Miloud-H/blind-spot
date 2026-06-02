@@ -5,7 +5,7 @@ use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Ordering;
 use crate::{geo, models::{GraphEdge, RouteResult}};
 
-const CAMERA_PENALTY: f64 = 8.0;  // ×9 sur une arête 100% surveillée
+const CAMERA_PENALTY: f64 = 15.0; // ×16 sur une arête 100% surveillée
 const WALK_SPEED_MS:  f64 = 1.4;  // m/s (~5 km/h)
 
 // ── Types internes ────────────────────────────────────────────────────────────
