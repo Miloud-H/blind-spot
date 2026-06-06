@@ -204,6 +204,55 @@ pub async fn compute_edge_exposures(pool: &SqlitePool) -> anyhow::Result<u32> {
     Ok(updated)
 }
 
+/// Recalcule l'exposition uniquement pour les arêtes proches d'une caméra.
+/// Appelé après ajout d'une caméra communautaire pour mettre à jour le graphe A*
+/// sans avoir à re-seeder tout Montréal.
+pub async fn recompute_exposures_near_camera(
+    pool: &SqlitePool,
+    cam: &crate::models::Camera,
+) -> anyhow::Result<u32> {
+    const HIGH_MULT: f64 = 2.2;
+    // Bbox autour de la portée max de la caméra + marge
+    let radius_deg = (cam.range_m * HIGH_MULT + 50.0) / 111_000.0;
+    let edges = db::get_routing_edges_with_nodes_in_bbox(
+        pool,
+        cam.lat - radius_deg, cam.lng - radius_deg,
+        cam.lat + radius_deg, cam.lng + radius_deg,
+    ).await?;
+
+    if edges.is_empty() { return Ok(0); }
+
+    let cams = std::slice::from_ref(cam);
+    let mut updated = 0u32;
+    const STEP_M: f64 = 5.0;
+
+    for edge in &edges {
+        let steps = ((edge.distance_m / STEP_M).ceil() as usize).max(2);
+        let pts: Vec<(f64, f64)> = (0..=steps).map(|i| {
+            let t = i as f64 / steps as f64;
+            (
+                edge.from_lat + t * (edge.to_lat - edge.from_lat),
+                edge.from_lng + t * (edge.to_lng - edge.from_lng),
+            )
+        }).collect();
+
+        let exp_c = exposure_fraction(&pts, &cams.iter().collect::<Vec<_>>(), 0.5);
+        let exp_s = exposure_fraction(&pts, &cams.iter().collect::<Vec<_>>(), 1.0);
+        let exp_h = exposure_fraction(&pts, &cams.iter().collect::<Vec<_>>(), HIGH_MULT);
+
+        if exp_c > 0.0 || exp_s > 0.0 || exp_h > 0.0 {
+            db::update_edge_exposure(pool, edge.id, exp_c, exp_s, exp_h).await?;
+            updated += 1;
+        }
+    }
+
+    tracing::debug!(
+        "Exposition mise à jour : {updated}/{} arêtes autour de la nouvelle caméra",
+        edges.len()
+    );
+    Ok(updated)
+}
+
 fn exposure_fraction(
     pts:      &[(f64, f64)],
     cameras:  &[&crate::models::Camera],

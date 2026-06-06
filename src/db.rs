@@ -313,6 +313,34 @@ pub async fn update_edge_exposure(
     Ok(())
 }
 
+/// Remet à zéro toutes les expositions (avant un recalcul complet).
+pub async fn reset_edge_exposures(pool: &SqlitePool) -> sqlx::Result<()> {
+    sqlx::query("UPDATE routing_edges SET exp_conserv = 0, exp_standard = 0, exp_high = 0")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Retourne les arêtes dans un bbox avec coordonnées des nœuds (pour calcul exposition local).
+pub async fn get_routing_edges_with_nodes_in_bbox(
+    pool: &SqlitePool,
+    min_lat: f64, min_lng: f64,
+    max_lat: f64, max_lng: f64,
+) -> sqlx::Result<Vec<GraphEdge>> {
+    sqlx::query_as::<_, GraphEdge>(
+        "SELECT e.id, e.from_node, e.to_node, e.distance_m,
+                n1.lat AS from_lat, n1.lng AS from_lng,
+                n2.lat AS to_lat,   n2.lng AS to_lng
+         FROM routing_edges e
+         JOIN routing_nodes n1 ON e.from_node = n1.id
+         JOIN routing_nodes n2 ON e.to_node   = n2.id
+         WHERE n1.lat BETWEEN ? AND ? AND n1.lng BETWEEN ? AND ?",
+    )
+    .bind(min_lat).bind(max_lat).bind(min_lng).bind(max_lng)
+    .fetch_all(pool)
+    .await
+}
+
 /// Retourne toutes les arêtes avec coordonnées des nœuds (pour calcul exposition).
 pub async fn get_all_routing_edges_with_nodes(pool: &SqlitePool) -> sqlx::Result<Vec<GraphEdge>> {
     sqlx::query_as::<_, GraphEdge>(

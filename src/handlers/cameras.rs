@@ -3,10 +3,12 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
+use std::sync::atomic::Ordering;
 use crate::{
     db, rate_limit,
     error::AppError,
     models::{BboxQuery, Camera, CreateCameraRequest},
+    services::routing_graph,
     AppState,
 };
 
@@ -49,6 +51,32 @@ pub async fn create(
             "note":      req.note,
         }
     })).unwrap_or_default());
+
+    // Mettre à jour les expositions du graphe A* autour de la nouvelle caméra
+    if state.routing_ready.load(Ordering::Relaxed) {
+        let pool_bg = state.pool.clone();
+        let cam = Camera {
+            id,
+            osm_id:    None,
+            lat:       req.lat,
+            lng:       req.lng,
+            direction: req.direction,
+            fov:       req.fov.unwrap_or(70.0),
+            range_m:   req.range_m.unwrap_or(30.0),
+            cam_type:  req.cam_type.unwrap_or_else(|| "unknown".into()),
+            name:      req.name,
+            operator:  None,
+            note:      req.note,
+            source:    "user".into(),
+            verified:  false,
+        };
+        tokio::spawn(async move {
+            match routing_graph::recompute_exposures_near_camera(&pool_bg, &cam).await {
+                Ok(n)  => tracing::debug!("Graphe mis à jour : {n} arêtes recalculées"),
+                Err(e) => tracing::warn!("Recalcul exposition échoué : {e}"),
+            }
+        });
+    }
 
     Ok((
         StatusCode::CREATED,

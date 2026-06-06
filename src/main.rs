@@ -129,8 +129,9 @@ async fn main() -> anyhow::Result<()> {
                 days_old
             );
         }
-        let pool_bg   = pool.clone();
-        let client_bg = http_client.clone();
+        let pool_bg    = pool.clone();
+        let client_bg  = http_client.clone();
+        let ready_flag = routing_ready.clone();
         tokio::spawn(async move {
             match services::overpass::seed_from_overpass(&pool_bg, &client_bg).await {
                 Ok(n)  => tracing::info!("Seed OSM terminé : {n} caméras importées/mises à jour"),
@@ -147,6 +148,18 @@ async fn main() -> anyhow::Result<()> {
                 }
             } else {
                 tracing::info!("{bld_count} bâtiments déjà en base — seed ignoré");
+            }
+            // Recalcul complet des expositions si le graphe A* est déjà seedé
+            if ready_flag.load(Ordering::Relaxed) {
+                tracing::info!("Re-seed caméras terminé — recalcul des expositions du graphe A*...");
+                if let Err(e) = db::reset_edge_exposures(&pool_bg).await {
+                    tracing::warn!("Reset expositions échoué : {e}");
+                } else {
+                    match services::routing_graph::compute_edge_exposures(&pool_bg).await {
+                        Ok(u)  => tracing::info!("Expositions recalculées : {u} arêtes exposées"),
+                        Err(e) => tracing::warn!("Recalcul exposition échoué : {e}"),
+                    }
+                }
             }
         });
     } else {
