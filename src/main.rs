@@ -299,7 +299,8 @@ async fn serve_index() -> impl IntoResponse {
         .replace(r#"src="/js/cameras.js""#,     &format!(r#"src="/js/cameras.js?v={}""#,     BUILD_ID))
         .replace(r#"src="/js/routing.js""#,     &format!(r#"src="/js/routing.js?v={}""#,     BUILD_ID))
         .replace(r#"src="/js/ui.js""#,          &format!(r#"src="/js/ui.js?v={}""#,          BUILD_ID))
-        .replace(r#"src="/js/proximity.js""#,  &format!(r#"src="/js/proximity.js?v={}""#,  BUILD_ID));
+        .replace(r#"src="/js/proximity.js""#,  &format!(r#"src="/js/proximity.js?v={}""#,  BUILD_ID))
+        .replace(r#"src="/js/heatmap.js""#,    &format!(r#"src="/js/heatmap.js?v={}""#,    BUILD_ID));
 
     (
         [

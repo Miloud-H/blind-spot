@@ -271,6 +271,10 @@ select option { background: var(--surface2); }
 .proximity-btn.active { background: rgba(255,40,40,0.18); border-color: #ff2828; color: #ff2828; box-shadow: 0 0 14px rgba(255,40,40,0.5); animation: proximity-pulse 1.2s ease-in-out infinite; }
 @keyframes proximity-pulse { 0%,100% { box-shadow: 0 0 8px rgba(255,40,40,0.4); } 50% { box-shadow: 0 0 20px rgba(255,40,40,0.8); } }
 
+/* HEATMAP BUTTON */
+.heatmap-btn { bottom: 164px; }
+.heatmap-btn.active { background: rgba(255,111,0,0.18); border-color: #ff6f00; color: #ff6f00; box-shadow: 0 0 14px rgba(255,111,0,0.4); }
+
 /* HISTORY */
 .history-item { display:flex; align-items:center; gap:8px; padding:7px 10px; background:var(--surface2); border:1px solid var(--border); margin-bottom:4px; cursor:pointer; transition:border-color .15s; }
 .history-item:hover { border-color:rgba(0,255,65,0.4); }
@@ -456,6 +460,7 @@ select option { background: var(--surface2); }
     font-size: 18px;
   }
   .proximity-btn { bottom: 158px; }
+  .heatmap-btn   { bottom: 210px; }
 
   .route-bar {
     bottom: 56px;

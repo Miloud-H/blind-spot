@@ -13,6 +13,7 @@
 <link rel="apple-touch-icon" href="/icons/icon.svg">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Oxanium:wght@300;400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css">
@@ -54,6 +55,9 @@
 
     <!-- Proximity alert button -->
     <button class="geoloc-btn proximity-btn" id="btn-proximity" title="Alerte caméra" onclick="toggleProximityAlert()">📳</button>
+
+    <!-- Heatmap toggle button -->
+    <button class="geoloc-btn heatmap-btn" id="btn-heatmap" title="Zones sans caméra" onclick="toggleHeatmap()">🌡</button>
 
     <!-- Route bar -->
     <div class="route-bar" id="route-bar" style="display:none;">
@@ -307,6 +311,7 @@
 <script src="/js/routing.js"></script>
 <script src="/js/ui.js"></script>
 <script src="/js/proximity.js"></script>
+<script src="/js/heatmap.js"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
