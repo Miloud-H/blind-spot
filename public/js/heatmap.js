@@ -14,24 +14,27 @@ function toggleHeatmap() {
 function _showHeatmap() {
   if (!window.L || !L.heatLayer) return;
 
-  // cameras est défini dans cameras.js
   const pts = (typeof cameras !== 'undefined' ? cameras : [])
     .map(c => [c.lat, c.lng, 1]);
 
   if (pts.length === 0) return;
 
+  // Masquer marqueurs et zones pour ne pas parasiter la lecture
+  if (typeof renderedCameras !== 'undefined' && typeof unmountCamera === 'function') {
+    for (const k of [...renderedCameras.keys()]) unmountCamera(k);
+  }
+
   _heatLayer = L.heatLayer(pts, {
-    radius:  35,
-    blur:    25,
+    radius:  45,
+    blur:    30,
     maxZoom: 17,
-    max:     8,
-    gradient: { 0.0: '#00000000', 0.2: '#0d47a1', 0.5: '#ff6f00', 1.0: '#ff1744' },
+    max:     3,   // 3 caméras en overlap = saturation rouge
+    gradient: { 0.05: '#1a237e', 0.35: '#ff6f00', 1.0: '#ff1744' },
   }).addTo(map);
 
   _heatEnabled = true;
   document.getElementById('btn-heatmap').classList.add('active');
 
-  // Rafraîchir si de nouvelles caméras se chargent
   map.on('moveend', _refreshHeatmap);
 }
 
@@ -47,4 +50,7 @@ function _removeHeatmap() {
   map.off('moveend', _refreshHeatmap);
   _heatEnabled = false;
   document.getElementById('btn-heatmap').classList.remove('active');
+
+  // Restaurer les marqueurs et zones
+  if (typeof syncViewport === 'function') syncViewport();
 }
