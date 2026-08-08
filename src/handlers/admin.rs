@@ -1,7 +1,8 @@
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
+    middleware::Next,
     response::Response,
     Json,
 };
@@ -31,13 +32,23 @@ fn require_admin(headers: &HeaderMap, token: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Middleware appliqué à tout le groupe de routes `/api/admin/*` (voir `main.rs`).
+/// Remplace l'appel `require_admin(...)` qui était répété en première ligne de
+/// chacun des handlers ci-dessous — un futur handler ne peut plus oublier la vérification.
+pub async fn auth_middleware(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    require_admin(&headers, &state.config.admin_token)?;
+    Ok(next.run(request).await)
+}
+
 /// GET /api/admin/stats — statistiques globales enrichies
 pub async fn stats(
     State(state): State<AppState>,
-    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
     let total: i64    = sqlx::query_scalar("SELECT COUNT(*) FROM cameras").fetch_one(&state.pool).await?;
     let osm: i64      = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'osm'").fetch_one(&state.pool).await?;
     let user: i64     = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'user'").fetch_one(&state.pool).await?;
@@ -70,10 +81,7 @@ pub async fn stats(
 /// GET /api/admin/reports — caméras avec au moins 1 signalement
 pub async fn list_reports(
     State(state): State<AppState>,
-    headers: HeaderMap,
 ) -> Result<Json<Vec<ReportedCamera>>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
     let cameras = sqlx::query_as::<_, ReportedCamera>(
         "SELECT id, lat, lng, cam_type, source, report_count, name, direction
          FROM cameras WHERE report_count > 0
@@ -89,10 +97,7 @@ pub async fn list_reports(
 /// avec les infos de la cible pour comparaison côte-à-côte.
 pub async fn list_duplicates(
     State(state): State<AppState>,
-    headers: HeaderMap,
 ) -> Result<Json<Vec<DuplicateCamera>>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
     let cameras = sqlx::query_as::<_, DuplicateCamera>(
         "SELECT c.id, c.lat, c.lng, c.cam_type, c.source, c.name, c.direction, \
                 c.possible_duplicate_of AS dup_of, \
@@ -111,11 +116,8 @@ pub async fn list_duplicates(
 /// POST /api/admin/cameras/:id/dismiss-duplicate — revue admin : "pas un doublon, garder les deux"
 pub async fn dismiss_duplicate(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
     if !db::dismiss_possible_duplicate(&state.pool, id).await? {
         return Err(AppError::NotFound);
     }
@@ -126,11 +128,8 @@ pub async fn dismiss_duplicate(
 /// GET /api/admin/cameras?page=1&limit=50&source=&cam_type=&reported=
 pub async fn list_cameras(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(params): Query<AdminCamerasQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
     let page  = params.page.unwrap_or(1).max(1);
     let limit = params.limit.unwrap_or(50).clamp(1, 200);
     let offset = (page - 1) * limit;
@@ -182,11 +181,8 @@ pub async fn list_cameras(
 /// DELETE /api/admin/cameras — supprime une liste de caméras en un seul appel
 pub async fn delete_cameras_bulk(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(body): Json<BulkDeleteRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
     if body.ids.is_empty() {
         return Ok(Json(serde_json::json!({ "deleted": 0 })));
     }
@@ -214,12 +210,9 @@ pub async fn delete_cameras_bulk(
 /// PATCH /api/admin/cameras/:id — déplace / modifie une caméra
 pub async fn update_camera(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(id): Path<i64>,
     Json(body): Json<UpdateCameraRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
     if !(-90.0..=90.0).contains(&body.lat) || !(-180.0..=180.0).contains(&body.lng) {
         return Err(AppError::BadRequest("Coordonnées invalides".into()));
     }
@@ -267,11 +260,8 @@ pub async fn update_camera(
 /// DELETE /api/admin/cameras/:id — supprime une caméra
 pub async fn delete_camera(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
     let affected = sqlx::query("DELETE FROM cameras WHERE id = ?")
         .bind(id)
         .execute(&state.pool)
@@ -293,10 +283,7 @@ pub async fn delete_camera(
 /// GET /api/admin/export/osm — exporte les caméras communautaires en .osm (JOSM)
 pub async fn export_osm(
     State(state): State<AppState>,
-    headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
     let cameras = sqlx::query_as::<_, Camera>(
         "SELECT id, osm_id, lat, lng, direction, fov, range_m, cam_type, name, \
                 operator, note, source, verified \
@@ -360,9 +347,7 @@ pub async fn export_osm(
 /// DELETE /api/admin/cache — vide le cache de routes en mémoire
 pub async fn clear_cache(
     State(state): State<AppState>,
-    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
     state.route_cache.clear().await;
     Ok(Json(serde_json::json!({ "message": "Cache vidé" })))
 }
@@ -370,10 +355,7 @@ pub async fn clear_cache(
 /// POST /api/admin/reseed — déclenche un re-import OSM complet
 pub async fn reseed(
     State(state): State<AppState>,
-    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
     let n = overpass::seed_from_overpass(&state.pool, &state.http_client, &state.event_bus)
         .await
         .map_err(|e| AppError::External(e.to_string()))?;
@@ -387,10 +369,7 @@ pub async fn reseed(
 /// POST /api/admin/reseed-graph — recrée le graphe routier depuis zéro en arrière-plan
 pub async fn reseed_graph(
     State(state): State<AppState>,
-    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    require_admin(&headers, &state.config.admin_token)?;
-
     // Marque le graphe comme non-prêt immédiatement
     state.routing_ready.store(false, Ordering::Relaxed);
     let _ = db::set_metadata(&state.pool, "routing_graph_ready", "0").await;

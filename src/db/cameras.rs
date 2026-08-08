@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 use crate::geo;
-use crate::models::{BuildingGeom, Camera, CreateCameraRequest, GraphEdge};
+use crate::models::{Camera, CreateCameraRequest};
 
 // ── Déduplication cross-source ───────────────────────────────────────────────
 //
@@ -171,70 +171,6 @@ pub async fn prune_stale_cameras(
     Ok(ids)
 }
 
-// ── Métadonnées ───────────────────────────────────────────────────────────────
-
-/// Lit une valeur depuis la table `metadata`. Retourne `None` si la clé n'existe pas.
-#[allow(dead_code)]
-pub async fn get_metadata(pool: &SqlitePool, key: &str) -> sqlx::Result<Option<String>> {
-    sqlx::query_scalar("SELECT value FROM metadata WHERE key = $1")
-        .bind(key)
-        .fetch_optional(pool)
-        .await
-}
-
-/// Écrit (ou met à jour) une valeur dans `metadata`.
-#[allow(dead_code)]
-pub async fn set_metadata(pool: &SqlitePool, key: &str, value: &str) -> sqlx::Result<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO metadata (key, value, updated_at)
-        VALUES ($1, $2, datetime('now'))
-        ON CONFLICT(key) DO UPDATE SET
-            value      = excluded.value,
-            updated_at = datetime('now')
-        "#,
-    )
-    .bind(key)
-    .bind(value)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// Enregistre l'horodatage du dernier import OSM (valeur = datetime SQLite).
-/// Utilisé par le mécanisme de re-seed automatique.
-pub async fn touch_seed_timestamp(pool: &SqlitePool) -> sqlx::Result<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO metadata (key, value, updated_at)
-        VALUES ('osm_seeded_at', datetime('now'), datetime('now'))
-        ON CONFLICT(key) DO UPDATE SET
-            value      = datetime('now'),
-            updated_at = datetime('now')
-        "#,
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// Retourne le nombre de jours entiers depuis le dernier import OSM.
-/// Retourne `i64::MAX` si aucun import n'a encore eu lieu.
-pub async fn days_since_osm_seed(pool: &SqlitePool) -> i64 {
-    let result: sqlx::Result<Option<Option<f64>>> = sqlx::query_scalar(
-        "SELECT julianday('now') - julianday(value) FROM metadata WHERE key = 'osm_seeded_at'",
-    )
-    .fetch_optional(pool)
-    .await;
-
-    result
-        .ok()
-        .flatten()
-        .flatten()
-        .map(|d| d as i64)
-        .unwrap_or(i64::MAX)
-}
-
 // ── Lecture ──────────────────────────────────────────────────────────────────
 
 /// Retourne les caméras dans un bounding box (lat/lng REAL — pas de PostGIS).
@@ -278,42 +214,16 @@ pub async fn get_cameras_in_bbox(
         .await
 }
 
-// ── Bâtiments ────────────────────────────────────────────────────────────────
-
-/// Retourne les bâtiments dont la bbox chevauche la zone [min_lat..max_lat, min_lng..max_lng].
-pub async fn get_buildings_in_bbox(
-    pool: &SqlitePool,
-    min_lat: f64, min_lng: f64,
-    max_lat: f64, max_lng: f64,
-) -> anyhow::Result<Vec<BuildingGeom>> {
-    // buildings dont la bbox intersecte le rectangle :
-    //   bld.min_lat <= query_max_lat  et  bld.max_lat >= query_min_lat
-    //   bld.min_lng <= query_max_lng  et  bld.max_lng >= query_min_lng
-    let rows: Vec<(f64, f64, f64, f64, String)> = sqlx::query_as(
-        "SELECT min_lat, max_lat, min_lng, max_lng, geom \
-         FROM buildings \
-         WHERE min_lat <= ? AND max_lat >= ? \
-           AND min_lng <= ? AND max_lng >= ? \
-         LIMIT 60000"
+/// Toutes les caméras (pour le calcul d'exposition des arêtes).
+pub async fn get_all_cameras(pool: &SqlitePool) -> sqlx::Result<Vec<Camera>> {
+    sqlx::query_as::<_, Camera>(
+        "SELECT id, osm_id, lat, lng, direction, fov, range_m, cam_type,
+                name, operator, note, source,
+                CAST(verified AS BOOLEAN) AS verified
+         FROM cameras",
     )
-    .bind(max_lat).bind(min_lat)
-    .bind(max_lng).bind(min_lng)
     .fetch_all(pool)
-    .await?;
-
-    let mut out = Vec::with_capacity(rows.len());
-    for (min_lat, max_lat, min_lng, max_lng, geom_str) in rows {
-        let pts: Vec<[f64; 2]> = serde_json::from_str(&geom_str)?;
-        out.push(BuildingGeom { pts, min_lat, max_lat, min_lng, max_lng });
-    }
-    Ok(out)
-}
-
-pub async fn count_buildings(pool: &SqlitePool) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM buildings")
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0)
+    .await
 }
 
 // ── Écriture ─────────────────────────────────────────────────────────────────
@@ -490,143 +400,4 @@ pub async fn upsert_inferred_camera(
     resolve_cross_source_duplicate(pool, id, lat, lng, cam_type, None).await?;
 
     Ok(())
-}
-
-// ── Graphe routier ────────────────────────────────────────────────────────────
-
-pub async fn count_routing_edges(pool: &SqlitePool) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM routing_edges")
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0)
-}
-
-pub async fn upsert_routing_node(pool: &SqlitePool, id: i64, lat: f64, lng: f64) -> sqlx::Result<()> {
-    sqlx::query(
-        "INSERT INTO routing_nodes (id, lat, lng) VALUES (?, ?, ?)
-         ON CONFLICT(id) DO NOTHING",
-    )
-    .bind(id).bind(lat).bind(lng)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub async fn insert_routing_edge(
-    pool: &SqlitePool,
-    from_node: i64,
-    to_node: i64,
-    distance_m: f64,
-) -> sqlx::Result<i64> {
-    let r = sqlx::query(
-        "INSERT INTO routing_edges (from_node, to_node, distance_m) VALUES (?, ?, ?)",
-    )
-    .bind(from_node).bind(to_node).bind(distance_m)
-    .execute(pool)
-    .await?;
-    Ok(r.last_insert_rowid())
-}
-
-pub async fn update_edge_exposure(
-    pool: &SqlitePool,
-    id: i64,
-    exp_conserv: f64,
-    exp_standard: f64,
-    exp_high: f64,
-) -> sqlx::Result<()> {
-    sqlx::query(
-        "UPDATE routing_edges
-         SET exp_conserv  = MAX(exp_conserv,  ?),
-             exp_standard = MAX(exp_standard, ?),
-             exp_high     = MAX(exp_high,     ?)
-         WHERE id = ?",
-    )
-    .bind(exp_conserv).bind(exp_standard).bind(exp_high).bind(id)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// Remet à zéro toutes les expositions (avant un recalcul complet).
-pub async fn reset_edge_exposures(pool: &SqlitePool) -> sqlx::Result<()> {
-    sqlx::query("UPDATE routing_edges SET exp_conserv = 0, exp_standard = 0, exp_high = 0")
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-/// Retourne les arêtes dans un bbox avec coordonnées des nœuds (pour calcul exposition local).
-pub async fn get_routing_edges_with_nodes_in_bbox(
-    pool: &SqlitePool,
-    min_lat: f64, min_lng: f64,
-    max_lat: f64, max_lng: f64,
-) -> sqlx::Result<Vec<GraphEdge>> {
-    sqlx::query_as::<_, GraphEdge>(
-        "SELECT e.id, e.from_node, e.to_node, e.distance_m,
-                n1.lat AS from_lat, n1.lng AS from_lng,
-                n2.lat AS to_lat,   n2.lng AS to_lng
-         FROM routing_edges e
-         JOIN routing_nodes n1 ON e.from_node = n1.id
-         JOIN routing_nodes n2 ON e.to_node   = n2.id
-         WHERE n1.lat BETWEEN ? AND ? AND n1.lng BETWEEN ? AND ?",
-    )
-    .bind(min_lat).bind(max_lat).bind(min_lng).bind(max_lng)
-    .fetch_all(pool)
-    .await
-}
-
-/// Retourne toutes les arêtes avec coordonnées des nœuds (pour calcul exposition).
-pub async fn get_all_routing_edges_with_nodes(pool: &SqlitePool) -> sqlx::Result<Vec<GraphEdge>> {
-    sqlx::query_as::<_, GraphEdge>(
-        "SELECT e.id, e.from_node, e.to_node, e.distance_m,
-                n1.lat AS from_lat, n1.lng AS from_lng,
-                n2.lat AS to_lat,   n2.lng AS to_lng
-         FROM routing_edges e
-         JOIN routing_nodes n1 ON e.from_node = n1.id
-         JOIN routing_nodes n2 ON e.to_node   = n2.id",
-    )
-    .fetch_all(pool)
-    .await
-}
-
-/// Retourne les arêtes dans un bbox avec l'exposition du preset sélectionné.
-/// Retourne aussi les coordonnées des nœuds pour construire le graphe A*.
-pub async fn get_routing_edges_in_bbox(
-    pool: &SqlitePool,
-    min_lat: f64, min_lng: f64,
-    max_lat: f64, max_lng: f64,
-    preset: &str,
-) -> sqlx::Result<Vec<GraphEdge>> {
-    let exp_col = match preset {
-        "conservative" => "e.exp_conserv",
-        "high"         => "e.exp_high",
-        _              => "e.exp_standard",
-    };
-    let sql = format!(
-        "SELECT e.id, e.from_node, e.to_node, e.distance_m,
-                n1.lat AS from_lat, n1.lng AS from_lng,
-                n2.lat AS to_lat,   n2.lng AS to_lng,
-                {exp_col} AS exposure
-         FROM routing_edges e
-         JOIN routing_nodes n1 ON e.from_node = n1.id
-         JOIN routing_nodes n2 ON e.to_node   = n2.id
-         WHERE n1.lat BETWEEN ? AND ? AND n1.lng BETWEEN ? AND ?"
-    );
-    sqlx::query_as::<_, GraphEdge>(&sql)
-        .bind(min_lat).bind(max_lat)
-        .bind(min_lng).bind(max_lng)
-        .fetch_all(pool)
-        .await
-}
-
-/// Toutes les caméras (pour le calcul d'exposition des arêtes).
-pub async fn get_all_cameras(pool: &SqlitePool) -> sqlx::Result<Vec<Camera>> {
-    sqlx::query_as::<_, Camera>(
-        "SELECT id, osm_id, lat, lng, direction, fov, range_m, cam_type,
-                name, operator, note, source,
-                CAST(verified AS BOOLEAN) AS verified
-         FROM cameras",
-    )
-    .fetch_all(pool)
-    .await
 }

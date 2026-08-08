@@ -162,3 +162,76 @@ fn reconstruct(came_from: &HashMap<i64, i64>, end: i64) -> Vec<i64> {
     path.reverse();
     path
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn edge(id: i64, from: i64, to: i64, from_pt: (f64, f64), to_pt: (f64, f64), distance_m: f64, exposure: f64) -> GraphEdge {
+        GraphEdge {
+            id, from_node: from, to_node: to, distance_m,
+            from_lat: from_pt.0, from_lng: from_pt.1,
+            to_lat: to_pt.0, to_lng: to_pt.1,
+            exposure,
+        }
+    }
+
+    #[test]
+    fn routes_directly_across_a_single_edge() {
+        let a = (45.500, -73.500);
+        let b = (45.501, -73.500);
+        let router = AstarRouter::new(&[edge(1, 1, 2, a, b, 100.0, 0.0)], true);
+
+        let result = router.route(a.0, a.1, b.0, b.1).expect("route attendue");
+        // path = [1, 2] (nœud de départ ET d'arrivée du chemin) → start + 2 nœuds + end
+        assert_eq!(result.coordinates.len(), 4);
+        assert!(result.distance_m > 0.0);
+        assert_eq!(result.duration_sec, result.distance_m / WALK_SPEED_MS);
+    }
+
+    #[test]
+    fn avoid_true_prefers_the_less_exposed_detour() {
+        let a = (45.500, -73.500);
+        let b = (45.502, -73.500);
+        let c = (45.501, -73.501);
+        // Direct A→B : court (100m) mais 100% exposé.
+        // Détour A→C→B : un peu plus long (60+60=120m) mais exposition nulle.
+        let edges = vec![
+            edge(1, 1, 2, a, b, 100.0, 1.0), // A → B direct, exposé
+            edge(2, 1, 3, a, c,  60.0, 0.0), // A → C
+            edge(3, 3, 2, c, b,  60.0, 0.0), // C → B
+        ];
+
+        let avoiding = AstarRouter::new(&edges, true);
+        let path = avoiding.astar(1, 2).expect("chemin attendu");
+        assert_eq!(path, vec![1, 3, 2], "devrait détourner via C pour éviter l'exposition");
+
+        let direct = AstarRouter::new(&edges, false);
+        let path = direct.astar(1, 2).expect("chemin attendu");
+        assert_eq!(path, vec![1, 2], "sans avoidance, le chemin direct (plus court) est préféré");
+    }
+
+    #[test]
+    fn disconnected_components_yield_no_route() {
+        let a = (45.500, -73.500);
+        let b = (45.501, -73.500);
+        let c = (46.000, -74.000); // composante isolée, loin de a/b
+        let d = (46.001, -74.000);
+        let edges = vec![
+            edge(1, 1, 2, a, b, 100.0, 0.0),
+            edge(2, 3, 4, c, d, 100.0, 0.0),
+        ];
+        let router = AstarRouter::new(&edges, true);
+        assert!(router.route(a.0, a.1, d.0, d.1).is_none());
+    }
+
+    #[test]
+    fn same_nearest_node_for_start_and_end_yields_trivial_path() {
+        let a = (45.500, -73.500);
+        let b = (45.501, -73.500);
+        let router = AstarRouter::new(&[edge(1, 1, 2, a, b, 100.0, 0.0)], true);
+        // Départ et arrivée tous deux très proches du nœud A → même nœud le plus proche
+        let result = router.route(45.5001, -73.5001, 45.5002, -73.5002).expect("route attendue");
+        assert_eq!(result.coordinates.len(), 3); // start + nœud A + end
+    }
+}
