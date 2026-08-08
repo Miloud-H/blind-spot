@@ -95,6 +95,11 @@ async fn main() -> anyhow::Result<()> {
     // Client HTTP partagé (seed + routing)
     let http_client = reqwest::Client::new();
 
+    // Canal d'événements WebSocket (capacité 64 — les clients lents droppent des events, pas grave)
+    // Créé avant les tâches de seed en arrière-plan pour qu'elles puissent diffuser les
+    // suppressions de caméras obsolètes en temps réel.
+    let (event_tx, _) = tokio::sync::broadcast::channel::<String>(64);
+
     // ── Auto-seed / re-seed Overpass ─────────────────────────────────────────
     // Conditions de (re-)seed :
     //   • Base OSM vide (premier lancement)
@@ -132,12 +137,13 @@ async fn main() -> anyhow::Result<()> {
         let pool_bg    = pool.clone();
         let client_bg  = http_client.clone();
         let ready_flag = routing_ready.clone();
+        let events_bg  = event_tx.clone();
         tokio::spawn(async move {
-            match services::overpass::seed_from_overpass(&pool_bg, &client_bg).await {
+            match services::overpass::seed_from_overpass(&pool_bg, &client_bg, &events_bg).await {
                 Ok(n)  => tracing::info!("Seed OSM terminé : {n} caméras importées/mises à jour"),
                 Err(e) => tracing::warn!("Seed OSM échoué : {e}"),
             }
-            match services::inferred::seed_inferred_cameras(&pool_bg, &client_bg).await {
+            match services::inferred::seed_inferred_cameras(&pool_bg, &client_bg, &events_bg).await {
                 Ok(n)  => tracing::info!("Seed inféré terminé : {n} caméras déduites importées"),
                 Err(e) => tracing::warn!("Seed inféré échoué : {e}"),
             }
@@ -191,9 +197,6 @@ async fn main() -> anyhow::Result<()> {
     } else {
         tracing::info!("{edge_count} arêtes routières en base — seed ignoré");
     }
-
-    // Canal d'événements WebSocket (capacité 64 — les clients lents droppent des events, pas grave)
-    let (event_tx, _) = tokio::sync::broadcast::channel::<String>(64);
 
     // Rate limiters : /api/route (10/min burst 3) et /api/cameras (60/min burst 10)
     let route_rl   = rate_limit::new_limiter(10,  3);
@@ -257,6 +260,8 @@ async fn main() -> anyhow::Result<()> {
                 .layer(rl(route_rl)))
         .route("/api/admin/stats",         get(handlers::admin::stats))
         .route("/api/admin/reports",       get(handlers::admin::list_reports))
+        .route("/api/admin/duplicates",    get(handlers::admin::list_duplicates))
+        .route("/api/admin/cameras/:id/dismiss-duplicate", post(handlers::admin::dismiss_duplicate))
         .route("/api/admin/cameras",       get(handlers::admin::list_cameras)
                                            .delete(handlers::admin::delete_cameras_bulk))
         .route("/api/admin/cameras/:id",   axum::routing::delete(handlers::admin::delete_camera)
