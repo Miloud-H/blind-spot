@@ -28,6 +28,10 @@
       <span class="ico">⚠</span> SIGNALEMENTS
       <span class="nbadge" id="nbadge-rep">0</span>
     </div>
+    <div class="nav-item" onclick="goto('duplicates')" id="nav-duplicates">
+      <span class="ico">⧉</span> DOUBLONS
+      <span class="nbadge" id="nbadge-dup">0</span>
+    </div>
     <div class="nav-item" onclick="goto('export')" id="nav-export">
       <span class="ico">⬇</span> EXPORT OSM
     </div>
@@ -132,6 +136,28 @@
             <th>ID</th><th>POSITION</th><th>TYPE</th><th>SOURCE</th><th>NOM/NOTE</th><th>SIGNALEMENTS</th><th></th>
           </tr></thead>
           <tbody id="rep-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ DOUBLONS ══ -->
+  <div class="section" id="section-duplicates">
+    <div class="sec-head">
+      <div><div class="sec-title">// DOUBLONS POTENTIELS</div><div class="sec-sub">Même zone + même type, direction inconnue/incompatible — revue manuelle requise</div></div>
+    </div>
+    <div class="infobox">
+      Ces paires ont été flaggées automatiquement (proximité ≤ 8m + même type) mais n'ont <span>pas</span> été fusionnées
+      car la direction ne permet pas de conclure avec certitude. <span>FUSIONNER</span> supprime la caméra de gauche (redondante) ;
+      <span>IGNORER</span> efface le flag et garde les deux (deux caméras distinctes confirmées).
+    </div>
+    <div class="panel">
+      <div class="tw">
+        <table>
+          <thead><tr>
+            <th>ID</th><th>POSITION</th><th>TYPE</th><th>SOURCE</th><th>DOUBLON POSSIBLE DE</th><th></th>
+          </tr></thead>
+          <tbody id="dup-tbody"></tbody>
         </table>
       </div>
     </div>

@@ -9,7 +9,10 @@ use std::sync::atomic::Ordering;
 use crate::{
     db,
     error::AppError,
-    models::{AdminCamerasQuery, BulkDeleteRequest, Camera, ReportedCamera, UpdateCameraRequest},
+    models::{
+        AdminCamerasQuery, BulkDeleteRequest, Camera, DuplicateCamera, ReportedCamera,
+        UpdateCameraRequest,
+    },
     services::{overpass, routing_graph},
     AppState,
 };
@@ -40,6 +43,7 @@ pub async fn stats(
     let user: i64     = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'user'").fetch_one(&state.pool).await?;
     let inferred: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'inferred'").fetch_one(&state.pool).await?;
     let reported: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE report_count > 0").fetch_one(&state.pool).await?;
+    let duplicates: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE possible_duplicate_of IS NOT NULL").fetch_one(&state.pool).await?;
     let user_reported: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'user' AND report_count > 0").fetch_one(&state.pool).await?;
     let type_fixed: i64   = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE cam_type = 'fixed'").fetch_one(&state.pool).await?;
     let type_ptz: i64     = sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE cam_type = 'ptz'").fetch_one(&state.pool).await?;
@@ -54,6 +58,7 @@ pub async fn stats(
         "cameras_inferred":   inferred,
         "cameras_reported":   reported,
         "cameras_user_reported": user_reported,
+        "cameras_duplicates": duplicates,
         "type_fixed":         type_fixed,
         "type_ptz":           type_ptz,
         "type_unknown":       type_unknown,
@@ -78,6 +83,44 @@ pub async fn list_reports(
     .await?;
 
     Ok(Json(cameras))
+}
+
+/// GET /api/admin/duplicates — caméras flaggées comme doublon ambigu d'une autre,
+/// avec les infos de la cible pour comparaison côte-à-côte.
+pub async fn list_duplicates(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<DuplicateCamera>>, AppError> {
+    require_admin(&headers, &state.config.admin_token)?;
+
+    let cameras = sqlx::query_as::<_, DuplicateCamera>(
+        "SELECT c.id, c.lat, c.lng, c.cam_type, c.source, c.name, c.direction, \
+                c.possible_duplicate_of AS dup_of, \
+                t.lat AS dup_lat, t.lng AS dup_lng, t.source AS dup_source \
+         FROM cameras c \
+         JOIN cameras t ON t.id = c.possible_duplicate_of \
+         WHERE c.possible_duplicate_of IS NOT NULL \
+         ORDER BY c.id DESC LIMIT 200",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(cameras))
+}
+
+/// POST /api/admin/cameras/:id/dismiss-duplicate — revue admin : "pas un doublon, garder les deux"
+pub async fn dismiss_duplicate(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_admin(&headers, &state.config.admin_token)?;
+
+    if !db::dismiss_possible_duplicate(&state.pool, id).await? {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(Json(serde_json::json!({ "message": "Flag de doublon effacé" })))
 }
 
 /// GET /api/admin/cameras?page=1&limit=50&source=&cam_type=&reported=
@@ -257,7 +300,9 @@ pub async fn export_osm(
     let cameras = sqlx::query_as::<_, Camera>(
         "SELECT id, osm_id, lat, lng, direction, fov, range_m, cam_type, name, \
                 operator, note, source, verified \
-         FROM cameras WHERE source = 'user' AND report_count = 0 ORDER BY id",
+         FROM cameras \
+         WHERE source = 'user' AND report_count = 0 AND possible_duplicate_of IS NULL \
+         ORDER BY id",
     )
     .fetch_all(&state.pool)
     .await?;
@@ -329,7 +374,7 @@ pub async fn reseed(
 ) -> Result<Json<serde_json::Value>, AppError> {
     require_admin(&headers, &state.config.admin_token)?;
 
-    let n = overpass::seed_from_overpass(&state.pool, &state.http_client)
+    let n = overpass::seed_from_overpass(&state.pool, &state.http_client, &state.event_bus)
         .await
         .map_err(|e| AppError::External(e.to_string()))?;
 

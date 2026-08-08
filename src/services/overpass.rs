@@ -31,8 +31,23 @@ const ENDPOINTS: &[&str] = &[
 /// Importe les caméras OSM de Montréal dans la base.
 /// Utilise POST application/x-www-form-urlencoded — méthode documentée Overpass API.
 /// Fallback sur l'endpoint suivant si HTTP ≥ 400 ou erreur réseau.
-pub async fn seed_from_overpass(pool: &SqlitePool, client: &Client) -> anyhow::Result<u32> {
-    let query = r#"[out:json][timeout:30];node["man_made"="surveillance"](45.45,-73.97,45.70,-73.47);out body;"#;
+pub async fn seed_from_overpass(
+    pool: &SqlitePool,
+    client: &Client,
+    event_bus: &tokio::sync::broadcast::Sender<String>,
+) -> anyhow::Result<u32> {
+    // Union de trois schémas de tagging distincts pour les dispositifs de surveillance fixes :
+    //   - man_made=surveillance   : caméras de surveillance générales (schéma principal)
+    //   - highway=speed_camera    : radars photo
+    //   - enforcement=*           : caméras d'application (feux rouges, vitesse moyenne…)
+    // Overpass déduplique automatiquement par id au sein de l'union.
+    let query = r#"[out:json][timeout:30];
+(
+  node["man_made"="surveillance"](45.45,-73.97,45.70,-73.47);
+  node["highway"="speed_camera"](45.45,-73.97,45.70,-73.47);
+  node["enforcement"](45.45,-73.97,45.70,-73.47);
+);
+out body;"#;
 
     tracing::info!("Seed Overpass API...");
 
@@ -144,11 +159,22 @@ pub async fn seed_from_overpass(pool: &SqlitePool, client: &Client) -> anyhow::R
             .unwrap_or(default_fov)
             .clamp(10.0, 360.0);
 
+        // Libellé par défaut pour les radars/caméras d'application — n'ont généralement
+        // ni `name` ni `operator` sur OSM contrairement aux caméras man_made=surveillance.
+        let enforcement_label = if el.tags.contains_key("enforcement") {
+            Some("Radar / caméra d'application de la loi")
+        } else if el.tags.get("highway").map(String::as_str) == Some("speed_camera") {
+            Some("Radar photo")
+        } else {
+            None
+        };
+
         let name = el
             .tags
             .get("name")
             .or_else(|| el.tags.get("operator"))
-            .map(String::as_str);
+            .map(String::as_str)
+            .or(enforcement_label);
 
         let note = el.tags.get("description").map(String::as_str);
 
@@ -163,6 +189,22 @@ pub async fn seed_from_overpass(pool: &SqlitePool, client: &Client) -> anyhow::R
         if let Err(e) = db::touch_seed_timestamp(pool).await {
             tracing::warn!("Impossible d'enregistrer osm_seeded_at : {e}");
         }
+    }
+
+    // Purge des caméras non revues depuis 3 cycles de reseed (~21j) — probable disparition
+    // réelle plutôt qu'un raté ponctuel d'Overpass (endpoint down, timeout...).
+    match db::prune_stale_cameras(pool, "osm", 21).await {
+        Ok(pruned) if !pruned.is_empty() => {
+            tracing::info!("{} caméra(s) OSM obsolète(s) purgée(s) : {:?}", pruned.len(), pruned);
+            for id in pruned {
+                let _ = event_bus.send(serde_json::to_string(&serde_json::json!({
+                    "type": "camera_deleted",
+                    "id":   id,
+                })).unwrap_or_default());
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Purge des caméras OSM obsolètes échouée : {e}"),
     }
 
     tracing::info!("Seed terminé : {ok}/{total} caméras upsertées");

@@ -68,7 +68,11 @@ const MTL_BBOX: &str = "45.45,-73.97,45.70,-73.47";
 
 /// Importe les caméras déduites (métro + police) depuis Overpass.
 /// Utilise `source='inferred'` pour les distinguer des caméras OSM et communautaires.
-pub async fn seed_inferred_cameras(pool: &SqlitePool, client: &Client) -> anyhow::Result<u32> {
+pub async fn seed_inferred_cameras(
+    pool: &SqlitePool,
+    client: &Client,
+    event_bus: &tokio::sync::broadcast::Sender<String>,
+) -> anyhow::Result<u32> {
     let mut grand_total = 0u32;
 
     for inf in INFERRED_TYPES {
@@ -140,6 +144,22 @@ pub async fn seed_inferred_cameras(pool: &SqlitePool, client: &Client) -> anyhow
 
         tracing::info!("Seed {} : {ok}/{total} upsertées", inf.label);
         grand_total += ok;
+    }
+
+    // Purge des caméras déduites non revues depuis 3 cycles de reseed (~21j) — le POI source
+    // (station, poste de police…) a probablement disparu ou a été dé-taggé sur OSM.
+    match db::prune_stale_cameras(pool, "inferred", 21).await {
+        Ok(pruned) if !pruned.is_empty() => {
+            tracing::info!("{} caméra(s) déduite(s) obsolète(s) purgée(s) : {:?}", pruned.len(), pruned);
+            for id in pruned {
+                let _ = event_bus.send(serde_json::to_string(&serde_json::json!({
+                    "type": "camera_deleted",
+                    "id":   id,
+                })).unwrap_or_default());
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Purge des caméras déduites obsolètes échouée : {e}"),
     }
 
     Ok(grand_total)
