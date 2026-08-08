@@ -76,8 +76,10 @@ async fn parse_and_store(json: &str, pool: &SqlitePool) -> anyhow::Result<usize>
         let (mut mn_lat, mut mx_lat, mut mn_lng, mut mx_lng) =
             (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
         for &[la, lo] in &pts {
-            if la < mn_lat { mn_lat = la; } if la > mx_lat { mx_lat = la; }
-            if lo < mn_lng { mn_lng = lo; } if lo > mx_lng { mx_lng = lo; }
+            if la < mn_lat { mn_lat = la; }
+            if la > mx_lat { mx_lat = la; }
+            if lo < mn_lng { mn_lng = lo; }
+            if lo > mx_lng { mx_lng = lo; }
         }
 
         let geom_json = serde_json::to_string(&pts)?;

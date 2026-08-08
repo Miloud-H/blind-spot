@@ -185,9 +185,9 @@ pub async fn get_cameras_in_bbox(
 ) -> sqlx::Result<Vec<Camera>> {
     // La clause source est injectée comme chaîne SQL statique (valeurs contrôlées côté Rust).
     let source_clause = match source {
-        Some(s) if s == "osm"  => " AND source = 'osm'",
-        Some(s) if s == "user" => " AND source = 'user'",
-        _                       => "",
+        Some("osm")  => " AND source = 'osm'",
+        Some("user") => " AND source = 'user'",
+        _            => "",
     };
 
     let sql = format!(
@@ -312,20 +312,22 @@ async fn resolve_cross_source_duplicate(
     Ok(())
 }
 
+/// Champs d'une caméra OSM à upserter (regroupés pour éviter une fonction à 10 arguments).
+pub struct NewOsmCamera<'a> {
+    pub osm_id:    i64,
+    pub lat:       f64,
+    pub lng:       f64,
+    pub direction: Option<f64>,
+    pub fov:       f64,
+    pub range_m:   f64,
+    pub cam_type:  &'a str,
+    pub name:      Option<&'a str>,
+    pub note:      Option<&'a str>,
+}
+
 /// Upsert d'une caméra OSM (par osm_id). Appelé par le seed Overpass.
 /// `range_m` est extrait du tag `camera:range` ou vaut 30 m par défaut.
-pub async fn upsert_osm_camera(
-    pool: &SqlitePool,
-    osm_id: i64,
-    lat: f64,
-    lng: f64,
-    direction: Option<f64>,
-    fov: f64,
-    range_m: f64,
-    cam_type: &str,
-    name: Option<&str>,
-    note: Option<&str>,
-) -> sqlx::Result<()> {
+pub async fn upsert_osm_camera(pool: &SqlitePool, cam: NewOsmCamera<'_>) -> sqlx::Result<()> {
     let id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO cameras (osm_id, lat, lng, direction, fov, range_m, cam_type, name, note, source, last_seen_at)
@@ -343,35 +345,37 @@ pub async fn upsert_osm_camera(
         RETURNING id
         "#,
     )
-    .bind(osm_id)
-    .bind(lat)
-    .bind(lng)
-    .bind(direction)
-    .bind(fov)
-    .bind(range_m)
-    .bind(cam_type)
-    .bind(name)
-    .bind(note)
+    .bind(cam.osm_id)
+    .bind(cam.lat)
+    .bind(cam.lng)
+    .bind(cam.direction)
+    .bind(cam.fov)
+    .bind(cam.range_m)
+    .bind(cam.cam_type)
+    .bind(cam.name)
+    .bind(cam.note)
     .fetch_one(pool)
     .await?;
 
-    resolve_cross_source_duplicate(pool, id, lat, lng, cam_type, direction).await?;
+    resolve_cross_source_duplicate(pool, id, cam.lat, cam.lng, cam.cam_type, cam.direction).await?;
 
     Ok(())
 }
 
+/// Champs d'une caméra déduite à upserter (regroupés pour éviter une fonction à 8 arguments).
+pub struct NewInferredCamera<'a> {
+    pub osm_id:   i64,
+    pub lat:      f64,
+    pub lng:      f64,
+    pub range_m:  f64,
+    pub cam_type: &'a str,
+    pub name:     &'a str,
+    pub note:     &'a str,
+}
+
 /// Upsert d'une caméra déduite (source = 'inferred').
 /// Identifiée par osm_id du POI source (métro, police…).
-pub async fn upsert_inferred_camera(
-    pool: &SqlitePool,
-    osm_id: i64,
-    lat: f64,
-    lng: f64,
-    range_m: f64,
-    cam_type: &str,
-    name: &str,
-    note: &str,
-) -> sqlx::Result<()> {
+pub async fn upsert_inferred_camera(pool: &SqlitePool, cam: NewInferredCamera<'_>) -> sqlx::Result<()> {
     let id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO cameras (osm_id, lat, lng, direction, fov, range_m, cam_type, name, note, source, last_seen_at)
@@ -387,17 +391,17 @@ pub async fn upsert_inferred_camera(
         RETURNING id
         "#,
     )
-    .bind(osm_id)
-    .bind(lat)
-    .bind(lng)
-    .bind(range_m)
-    .bind(cam_type)
-    .bind(name)
-    .bind(note)
+    .bind(cam.osm_id)
+    .bind(cam.lat)
+    .bind(cam.lng)
+    .bind(cam.range_m)
+    .bind(cam.cam_type)
+    .bind(cam.name)
+    .bind(cam.note)
     .fetch_one(pool)
     .await?;
 
-    resolve_cross_source_duplicate(pool, id, lat, lng, cam_type, None).await?;
+    resolve_cross_source_duplicate(pool, id, cam.lat, cam.lng, cam.cam_type, None).await?;
 
     Ok(())
 }

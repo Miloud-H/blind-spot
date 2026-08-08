@@ -125,18 +125,12 @@ pub async fn seed_inferred_cameras(
         for el in &elements {
             let name = el.tags.get("name").map(String::as_str).unwrap_or(inf.label);
 
-            match db::upsert_inferred_camera(
-                pool,
-                el.id,
-                el.lat,
-                el.lon,
-                inf.range_m,
-                inf.cam_type,
-                name,
-                inf.note,
-            )
-            .await
-            {
+            let new_cam = db::NewInferredCamera {
+                osm_id: el.id, lat: el.lat, lng: el.lon,
+                range_m: inf.range_m, cam_type: inf.cam_type,
+                name, note: inf.note,
+            };
+            match db::upsert_inferred_camera(pool, new_cam).await {
                 Ok(()) => ok += 1,
                 Err(e) => tracing::warn!("Erreur insert inferred osm_id={}: {e}", el.id),
             }

@@ -178,7 +178,11 @@ out body;"#;
 
         let note = el.tags.get("description").map(String::as_str);
 
-        match db::upsert_osm_camera(pool, el.id, el.lat, el.lon, direction, fov, range_m, cam_type, name, note).await {
+        let new_cam = db::NewOsmCamera {
+            osm_id: el.id, lat: el.lat, lng: el.lon,
+            direction, fov, range_m, cam_type, name, note,
+        };
+        match db::upsert_osm_camera(pool, new_cam).await {
             Ok(()) => ok += 1,
             Err(e) => tracing::warn!("Erreur insert osm_id={}: {e}", el.id),
         }

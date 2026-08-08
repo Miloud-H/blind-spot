@@ -103,6 +103,9 @@ pub fn merge_overlapping_rings(rings: Vec<Vec<[f64; 2]>>) -> Vec<Vec<[f64; 2]>> 
 
     // Union-Find : relier les rings dont les bboxes se chevauchent
     let mut uf = UnionFind::new(n);
+    // Comparaison par paire i<j sur indices — needless_range_loop ne s'applique pas ici
+    // (on a besoin des deux indices pour indexer `bboxes` et appeler `uf.union`).
+    #[allow(clippy::needless_range_loop)]
     for i in 0..n {
         let [ax0, ay0, ax1, ay1] = bboxes[i];
         for j in (i + 1)..n {

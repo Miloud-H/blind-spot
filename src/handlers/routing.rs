@@ -51,7 +51,7 @@ pub async fn calculate(
     let max_lng = f64::max(req.start.lng, req.end.lng);
 
     let diag = ((max_lat - min_lat).powi(2) + (max_lng - min_lng).powi(2)).sqrt();
-    let margin = f64::min(0.05, f64::max(0.012, diag * 0.6));
+    let margin = (diag * 0.6).clamp(0.012, 0.05);
 
     // ── 2. Caméras dans le bbox (depuis SQLite) ──────────────────────────────
     // Le backend est la source de vérité : les caméras OSM sont importées au démarrage,

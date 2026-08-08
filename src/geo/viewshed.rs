@@ -5,9 +5,10 @@ use crate::models::{BuildingGeom, Camera};
 use super::shapes::{build_circle, build_cone};
 
 /// Retourne t ∈ (0, 1] si le rayon A→B intersecte le segment C→D, sinon None.
-/// Coordonnées : x = lng, y = lat (cohérent avec le JS).
-fn ray_seg_t(ax: f64, ay: f64, bx: f64, by: f64,
-             cx: f64, cy: f64, dx: f64, dy: f64) -> Option<f64> {
+/// Coordonnées (x, y) = (lng, lat), cohérent avec le JS.
+fn ray_seg_t(a: (f64, f64), b: (f64, f64), c: (f64, f64), d: (f64, f64)) -> Option<f64> {
+    let (ax, ay) = a; let (bx, by) = b;
+    let (cx, cy) = c; let (dx, dy) = d;
     let abx = bx - ax; let aby = by - ay;
     let cdx = dx - cx; let cdy = dy - cy;
     let den = abx * cdy - aby * cdx;
@@ -15,7 +16,7 @@ fn ray_seg_t(ax: f64, ay: f64, bx: f64, by: f64,
     let acx = cx - ax; let acy = cy - ay;
     let t = (acx * cdy - acy * cdx) / den;
     let u = (acx * aby - acy * abx) / den;
-    if t > 1e-9 && t <= 1.0 + 1e-9 && u >= -1e-9 && u <= 1.0 + 1e-9 {
+    if t > 1e-9 && t <= 1.0 + 1e-9 && (-1e-9..=1.0 + 1e-9).contains(&u) {
         Some(t.min(1.0))
     } else {
         None
@@ -91,7 +92,7 @@ pub fn compute_viewshed(
             for j in 0..b.pts.len().saturating_sub(1) {
                 let (x3, y3) = (b.pts[j][1],   b.pts[j][0]);
                 let (x4, y4) = (b.pts[j+1][1], b.pts[j+1][0]);
-                if let Some(t) = ray_seg_t(cx, cy, ex, ey, x3, y3, x4, y4) {
+                if let Some(t) = ray_seg_t((cx, cy), (ex, ey), (x3, y3), (x4, y4)) {
                     if t < min_t { min_t = t; }
                 }
             }
