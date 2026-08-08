@@ -265,28 +265,6 @@ async fn serve_admin() -> impl IntoResponse {
     )
 }
 
-#[cfg(test)]
-mod cache_bust_tests {
-    use super::cache_bust;
-
-    #[test]
-    fn appends_version_to_js_and_css_without_touching_other_attrs() {
-        let html = r#"<link href="/css/style.css"><script src="/js/app.js"></script><img src="/img/logo.png">"#;
-        let out = cache_bust(html, "abc123");
-        assert!(out.contains(r#"href="/css/style.css?v=abc123""#));
-        assert!(out.contains(r#"src="/js/app.js?v=abc123""#));
-        // Une ressource hors /js /css n'est pas touchée
-        assert!(out.contains(r#"src="/img/logo.png""#));
-    }
-
-    #[test]
-    fn handles_multiple_js_files_without_per_file_code() {
-        let html = r#"<script src="/js/a.js"></script><script src="/js/b.js"></script>"#;
-        let out = cache_bust(html, "v1");
-        assert_eq!(out.matches("?v=v1").count(), 2);
-    }
-}
-
 // ── Health check ─────────────────────────────────────────────────────────────
 
 async fn health() -> Json<serde_json::Value> {
@@ -318,5 +296,27 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c  => { tracing::info!("Ctrl+C reçu — arrêt en cours…"); }
         _ = sigterm => { tracing::info!("SIGTERM reçu — arrêt en cours…"); }
+    }
+}
+
+#[cfg(test)]
+mod cache_bust_tests {
+    use super::cache_bust;
+
+    #[test]
+    fn appends_version_to_js_and_css_without_touching_other_attrs() {
+        let html = r#"<link href="/css/style.css"><script src="/js/app.js"></script><img src="/img/logo.png">"#;
+        let out = cache_bust(html, "abc123");
+        assert!(out.contains(r#"href="/css/style.css?v=abc123""#));
+        assert!(out.contains(r#"src="/js/app.js?v=abc123""#));
+        // Une ressource hors /js /css n'est pas touchée
+        assert!(out.contains(r#"src="/img/logo.png""#));
+    }
+
+    #[test]
+    fn handles_multiple_js_files_without_per_file_code() {
+        let html = r#"<script src="/js/a.js"></script><script src="/js/b.js"></script>"#;
+        let out = cache_bust(html, "v1");
+        assert_eq!(out.matches("?v=v1").count(), 2);
     }
 }
