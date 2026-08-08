@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{env, str::FromStr};
 use tower_http::cors::{Any, CorsLayer};
@@ -21,6 +21,7 @@ mod rate_limit;
 mod route_cache;
 mod routing;
 mod services;
+mod startup;
 
 pub use error::AppError;
 pub type AppResult<T> = Result<T, AppError>;
@@ -95,102 +96,9 @@ async fn main() -> anyhow::Result<()> {
     // Client HTTP partagé (seed + routing)
     let http_client = reqwest::Client::new();
 
-    // ── Auto-seed / re-seed Overpass ─────────────────────────────────────────
-    // Conditions de (re-)seed :
-    //   • Base OSM vide (premier lancement)
-    //   • Dernier import OSM > 7 jours
-    // Le seed est lancé en background — le serveur démarre immédiatement.
-    let cam_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM cameras WHERE source = 'osm'")
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(0);
-
-    let days_old = db::days_since_osm_seed(&pool).await;
-    let should_seed = cam_count == 0 || days_old >= 7;
-
-    let bld_count: i64   = db::count_buildings(&pool).await;
-    let edge_count: i64  = db::count_routing_edges(&pool).await;
-    // Le graphe est "prêt" si le seed précédent s'est terminé avec succès
-    let graph_ready_persisted = db::get_metadata(&pool, "routing_graph_ready")
-        .await.ok().flatten().map(|v| v == "1").unwrap_or(false);
-    let routing_ready = Arc::new(AtomicBool::new(graph_ready_persisted && edge_count > 0));
-    if graph_ready_persisted && edge_count > 0 {
-        tracing::info!("Routeur A* disponible ({edge_count} arêtes)");
-    }
-
-    // ── Seed caméras + bâtiments (conditionnel : base vide ou données > 7 jours) ─
-    if should_seed {
-        if cam_count == 0 {
-            tracing::info!("Base OSM vide — import initial depuis Overpass en arrière-plan…");
-        } else {
-            tracing::info!(
-                "Données OSM âgées de {} jour(s) — re-seed en arrière-plan…",
-                days_old
-            );
-        }
-        let pool_bg    = pool.clone();
-        let client_bg  = http_client.clone();
-        let ready_flag = routing_ready.clone();
-        tokio::spawn(async move {
-            match services::overpass::seed_from_overpass(&pool_bg, &client_bg).await {
-                Ok(n)  => tracing::info!("Seed OSM terminé : {n} caméras importées/mises à jour"),
-                Err(e) => tracing::warn!("Seed OSM échoué : {e}"),
-            }
-            match services::inferred::seed_inferred_cameras(&pool_bg, &client_bg).await {
-                Ok(n)  => tracing::info!("Seed inféré terminé : {n} caméras déduites importées"),
-                Err(e) => tracing::warn!("Seed inféré échoué : {e}"),
-            }
-            if bld_count == 0 {
-                match services::buildings::seed_buildings(&pool_bg, &client_bg).await {
-                    Ok(n)  => tracing::info!("Seed bâtiments terminé : {n} bâtiments insérés"),
-                    Err(e) => tracing::warn!("Seed bâtiments échoué : {e}"),
-                }
-            } else {
-                tracing::info!("{bld_count} bâtiments déjà en base — seed ignoré");
-            }
-            // Recalcul complet des expositions si le graphe A* est déjà seedé
-            if ready_flag.load(Ordering::Relaxed) {
-                tracing::info!("Re-seed caméras terminé — recalcul des expositions du graphe A*...");
-                if let Err(e) = db::reset_edge_exposures(&pool_bg).await {
-                    tracing::warn!("Reset expositions échoué : {e}");
-                } else {
-                    match services::routing_graph::compute_edge_exposures(&pool_bg).await {
-                        Ok(u)  => tracing::info!("Expositions recalculées : {u} arêtes exposées"),
-                        Err(e) => tracing::warn!("Recalcul exposition échoué : {e}"),
-                    }
-                }
-            }
-        });
-    } else {
-        tracing::info!(
-            "{cam_count} caméras OSM en base (import il y a {} jour(s)) — seed ignoré",
-            days_old
-        );
-    }
-
-    // ── Seed graphe routier (indépendant — lancé si table vide) ──────────────
-    if !graph_ready_persisted || edge_count == 0 {
-        tracing::info!("Graphe routier vide — seed en arrière-plan…");
-        let pool_bg   = pool.clone();
-        let client_bg = http_client.clone();
-        let ready_flag = routing_ready.clone();
-        tokio::spawn(async move {
-            match services::routing_graph::seed_routing_graph(&pool_bg, &client_bg).await {
-                Err(e) => { tracing::warn!("Seed graphe routier échoué : {e}"); return; }
-                Ok((n, e)) => tracing::info!("Graphe routier seedé : {n} nœuds, {e} arêtes"),
-            }
-            match services::routing_graph::compute_edge_exposures(&pool_bg).await {
-                Err(e) => { tracing::warn!("Calcul exposition échoué : {e}"); return; }
-                Ok(u)  => tracing::info!("Exposition calculée : {u} arêtes exposées"),
-            }
-            let _ = db::set_metadata(&pool_bg, "routing_graph_ready", "1").await;
-            ready_flag.store(true, Ordering::Relaxed);
-            tracing::info!("Routeur A* prêt ✓");
-        });
-    } else {
-        tracing::info!("{edge_count} arêtes routières en base — seed ignoré");
-    }
+    // Tâches de seed (caméras OSM/inférées, bâtiments, graphe routier) — arrière-plan,
+    // le serveur démarre immédiatement. Voir startup.rs.
+    let routing_ready = startup::spawn_seed_tasks(&pool, &http_client).await;
 
     // Canal d'événements WebSocket (capacité 64 — les clients lents droppent des events, pas grave)
     let (event_tx, _) = tokio::sync::broadcast::channel::<String>(64);
@@ -255,16 +163,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/route",
             post(handlers::routing::calculate)
                 .layer(rl(route_rl)))
-        .route("/api/admin/stats",         get(handlers::admin::stats))
-        .route("/api/admin/reports",       get(handlers::admin::list_reports))
-        .route("/api/admin/cameras",       get(handlers::admin::list_cameras)
-                                           .delete(handlers::admin::delete_cameras_bulk))
-        .route("/api/admin/cameras/:id",   axum::routing::delete(handlers::admin::delete_camera)
-                                           .patch(handlers::admin::update_camera))
-        .route("/api/admin/export/osm",    get(handlers::admin::export_osm))
-        .route("/api/admin/cache",         axum::routing::delete(handlers::admin::clear_cache))
-        .route("/api/admin/reseed",        post(handlers::admin::reseed))
-        .route("/api/admin/reseed-graph",  post(handlers::admin::reseed_graph))
+        .merge(admin_routes(state.clone()))
         .with_state(state)
         .layer(cors)
         .fallback_service(static_files);
@@ -281,6 +180,23 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Groupe des routes `/api/admin/*`, protégées par un seul middleware d'auth
+/// (`route_layer`) plutôt qu'un appel `require_admin(...)` répété dans chaque handler.
+fn admin_routes(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/api/admin/stats",         get(handlers::admin::stats))
+        .route("/api/admin/reports",       get(handlers::admin::list_reports))
+        .route("/api/admin/cameras",       get(handlers::admin::list_cameras)
+                                           .delete(handlers::admin::delete_cameras_bulk))
+        .route("/api/admin/cameras/:id",   axum::routing::delete(handlers::admin::delete_camera)
+                                           .patch(handlers::admin::update_camera))
+        .route("/api/admin/export/osm",    get(handlers::admin::export_osm))
+        .route("/api/admin/cache",         axum::routing::delete(handlers::admin::clear_cache))
+        .route("/api/admin/reseed",        post(handlers::admin::reseed))
+        .route("/api/admin/reseed-graph",  post(handlers::admin::reseed_graph))
+        .route_layer(middleware::from_fn_with_state(state, handlers::admin::auth_middleware))
+}
+
 // ── Index HTML avec cache-busting ────────────────────────────────────────────
 // Sert index.html avec :
 //   • Cache-Control: no-cache — le browser revalide toujours (pas de cache intermédiaire)
@@ -290,18 +206,37 @@ const INDEX_HTML: &str = include_str!("../public/index.html");
 const ADMIN_HTML: &str = include_str!("../public/admin.html");
 const BUILD_ID:   &str = env!("GIT_HASH");
 
-async fn serve_index() -> impl IntoResponse {
-    let html = INDEX_HTML
-        .replace(r#"href="/css/style.css""#,    &format!(r#"href="/css/style.css?v={}""#,    BUILD_ID))
-        .replace(r#"src="/js/app.js""#,         &format!(r#"src="/js/app.js?v={}""#,         BUILD_ID))
-        .replace(r#"src="/js/geo.js""#,         &format!(r#"src="/js/geo.js?v={}""#,         BUILD_ID))
-        .replace(r#"src="/js/viewshed.js""#,    &format!(r#"src="/js/viewshed.js?v={}""#,    BUILD_ID))
-        .replace(r#"src="/js/cameras.js""#,     &format!(r#"src="/js/cameras.js?v={}""#,     BUILD_ID))
-        .replace(r#"src="/js/routing.js""#,     &format!(r#"src="/js/routing.js?v={}""#,     BUILD_ID))
-        .replace(r#"src="/js/ui.js""#,          &format!(r#"src="/js/ui.js?v={}""#,          BUILD_ID))
-        .replace(r#"src="/js/proximity.js""#,  &format!(r#"src="/js/proximity.js?v={}""#,  BUILD_ID))
-        .replace(r#"src="/js/heatmap.js""#,    &format!(r#"src="/js/heatmap.js?v={}""#,    BUILD_ID));
+/// Ajoute `?v=build_id` à la fin de tout attribut `src="/js/...">` ou `href="/css/...">`.
+/// Générique — aucune ligne à ajouter quand un nouveau module JS/CSS apparaît,
+/// contrairement à une liste de `.replace()` par fichier (facile à oublier).
+fn cache_bust(html: &str, build_id: &str) -> String {
+    const MARKERS: [&str; 2] = ["src=\"/js/", "href=\"/css/"];
+    let mut out = String::with_capacity(html.len() + 64);
+    let mut rest = html;
+    loop {
+        let next = MARKERS.iter()
+            .filter_map(|m| rest.find(m).map(|i| (i, *m)))
+            .min_by_key(|&(i, _)| i);
 
+        let Some((idx, marker)) = next else {
+            out.push_str(rest);
+            break;
+        };
+
+        let after_marker = idx + marker.len();
+        out.push_str(&rest[..after_marker]);
+        let tail = &rest[after_marker..];
+        let end_quote = tail.find('"').unwrap_or(tail.len());
+        out.push_str(&tail[..end_quote]);
+        out.push_str("?v=");
+        out.push_str(build_id);
+        rest = &tail[end_quote..];
+    }
+    out
+}
+
+async fn serve_index() -> impl IntoResponse {
+    let html = cache_bust(INDEX_HTML, BUILD_ID);
     (
         [
             (header::CONTENT_TYPE,  HeaderValue::from_static("text/html; charset=utf-8")),
@@ -314,9 +249,7 @@ async fn serve_index() -> impl IntoResponse {
 }
 
 async fn serve_admin() -> impl IntoResponse {
-    let html = ADMIN_HTML
-        .replace(r#"href="/css/admin.css""#, &format!(r#"href="/css/admin.css?v={}""#, BUILD_ID))
-        .replace(r#"src="/js/admin.js""#,    &format!(r#"src="/js/admin.js?v={}""#,    BUILD_ID));
+    let html = cache_bust(ADMIN_HTML, BUILD_ID);
     (
         [
             (header::CONTENT_TYPE,  HeaderValue::from_static("text/html; charset=utf-8")),
@@ -326,6 +259,28 @@ async fn serve_admin() -> impl IntoResponse {
         ],
         html,
     )
+}
+
+#[cfg(test)]
+mod cache_bust_tests {
+    use super::cache_bust;
+
+    #[test]
+    fn appends_version_to_js_and_css_without_touching_other_attrs() {
+        let html = r#"<link href="/css/style.css"><script src="/js/app.js"></script><img src="/img/logo.png">"#;
+        let out = cache_bust(html, "abc123");
+        assert!(out.contains(r#"href="/css/style.css?v=abc123""#));
+        assert!(out.contains(r#"src="/js/app.js?v=abc123""#));
+        // Une ressource hors /js /css n'est pas touchée
+        assert!(out.contains(r#"src="/img/logo.png""#));
+    }
+
+    #[test]
+    fn handles_multiple_js_files_without_per_file_code() {
+        let html = r#"<script src="/js/a.js"></script><script src="/js/b.js"></script>"#;
+        let out = cache_bust(html, "v1");
+        assert_eq!(out.matches("?v=v1").count(), 2);
+    }
 }
 
 // ── Health check ─────────────────────────────────────────────────────────────
