@@ -34,7 +34,21 @@ pub async fn create(
     }
 
     let ip_hash = rate_limit::hash_ip(&headers);
-    let id: i64 = db::insert_camera(&state.pool, &req, &ip_hash).await?;
+    let outcome = db::insert_camera(&state.pool, &req, &ip_hash).await?;
+    let id = outcome.id;
+
+    // Doublon quasi-certain : la caméra existante a été corroborée, rien de nouveau
+    // n'a été créé — pas d'évènement "camera_added" ni de recalcul d'exposition.
+    if outcome.merged {
+        return Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "id": id,
+                "merged": true,
+                "message": "Caméra déjà connue à cet endroit — signalement pris en compte"
+            })),
+        ));
+    }
 
     let _ = state.event_bus.send(serde_json::to_string(&serde_json::json!({
         "type": "camera_added",
@@ -85,7 +99,13 @@ pub async fn create(
 }
 
 
-/// POST /api/cameras/:id/report — signalement dédupliqué par hash IP
+/// Nombre de signalements indépendants ("SIGNALER COMME RETIRÉE") au-delà duquel une
+/// caméra est supprimée automatiquement, sans revue admin — 3 hash IP distincts requis,
+/// assez robuste contre un signalement isolé/malveillant tout en évitant le goulot manuel.
+const AUTO_REMOVE_REPORT_THRESHOLD: i64 = 3;
+
+/// POST /api/cameras/:id/report — signalement dédupliqué par hash IP.
+/// Au-delà du seuil, la caméra est retirée automatiquement (corroborée par plusieurs sources).
 pub async fn report(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -112,15 +132,32 @@ pub async fn report(
     .await?
     .rows_affected();
 
-    if inserted > 0 {
-        sqlx::query("UPDATE cameras SET report_count = report_count + 1 WHERE id = ?")
-            .bind(id)
-            .execute(&state.pool)
-            .await?;
-        Ok(Json(serde_json::json!({ "message": "Signalement enregistré" })))
-    } else {
-        Ok(Json(serde_json::json!({ "message": "Déjà signalé" })))
+    if inserted == 0 {
+        return Ok(Json(serde_json::json!({ "message": "Déjà signalé" })));
     }
+
+    let report_count: i64 = sqlx::query_scalar(
+        "UPDATE cameras SET report_count = report_count + 1 WHERE id = ? RETURNING report_count",
+    )
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    if report_count >= AUTO_REMOVE_REPORT_THRESHOLD {
+        db::delete_camera(&state.pool, id).await?;
+
+        let _ = state.event_bus.send(serde_json::to_string(&serde_json::json!({
+            "type": "camera_deleted",
+            "id":   id,
+        })).unwrap_or_default());
+
+        return Ok(Json(serde_json::json!({
+            "message": "Caméra retirée — confirmée absente par plusieurs signalements",
+            "removed": true
+        })));
+    }
+
+    Ok(Json(serde_json::json!({ "message": "Signalement enregistré" })))
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

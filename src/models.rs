@@ -97,6 +97,23 @@ pub struct AdminCamerasQuery {
     pub reported: Option<bool>,
 }
 
+/// GET /api/admin/duplicates — caméra flaggée `possible_duplicate_of` + infos de la cible,
+/// pour comparaison côte-à-côte lors d'une revue admin.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct DuplicateCamera {
+    pub id:         i64,
+    pub lat:        f64,
+    pub lng:        f64,
+    pub cam_type:   String,
+    pub source:     String,
+    pub name:       Option<String>,
+    pub direction:  Option<f64>,
+    pub dup_of:     i64,
+    pub dup_lat:    f64,
+    pub dup_lng:    f64,
+    pub dup_source: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BulkDeleteRequest {
     pub ids: Vec<i64>,

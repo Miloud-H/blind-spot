@@ -9,7 +9,12 @@ use crate::{db, services};
 
 /// Lance les tâches de seed en arrière-plan et retourne le flag partagé `routing_ready`,
 /// mis à `true` une fois le graphe routier A* complètement construit.
-pub async fn spawn_seed_tasks(pool: &SqlitePool, http_client: &reqwest::Client) -> Arc<AtomicBool> {
+/// `event_bus` : diffuse les suppressions de caméras obsolètes (purge post-reseed) en temps réel.
+pub async fn spawn_seed_tasks(
+    pool: &SqlitePool,
+    http_client: &reqwest::Client,
+    event_bus: &tokio::sync::broadcast::Sender<String>,
+) -> Arc<AtomicBool> {
     // ── Auto-seed / re-seed Overpass ─────────────────────────────────────────
     // Conditions de (re-)seed :
     //   • Base OSM vide (premier lancement)
@@ -46,12 +51,13 @@ pub async fn spawn_seed_tasks(pool: &SqlitePool, http_client: &reqwest::Client) 
         let pool_bg    = pool.clone();
         let client_bg  = http_client.clone();
         let ready_flag = routing_ready.clone();
+        let events_bg  = event_bus.clone();
         tokio::spawn(async move {
-            match services::overpass::seed_from_overpass(&pool_bg, &client_bg).await {
+            match services::overpass::seed_from_overpass(&pool_bg, &client_bg, &events_bg).await {
                 Ok(n)  => tracing::info!("Seed OSM terminé : {n} caméras importées/mises à jour"),
                 Err(e) => tracing::warn!("Seed OSM échoué : {e}"),
             }
-            match services::inferred::seed_inferred_cameras(&pool_bg, &client_bg).await {
+            match services::inferred::seed_inferred_cameras(&pool_bg, &client_bg, &events_bg).await {
                 Ok(n)  => tracing::info!("Seed inféré terminé : {n} caméras déduites importées"),
                 Err(e) => tracing::warn!("Seed inféré échoué : {e}"),
             }

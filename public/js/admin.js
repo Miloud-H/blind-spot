@@ -34,9 +34,10 @@ function goto(id) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('section-' + id).classList.add('active');
   document.getElementById('nav-' + id).classList.add('active');
-  if (id === 'cameras') loadCameras(1);
-  if (id === 'reports') loadReports();
-  if (id === 'export')  loadExportStats();
+  if (id === 'cameras')    loadCameras(1);
+  if (id === 'reports')    loadReports();
+  if (id === 'duplicates') loadDuplicates();
+  if (id === 'export')     loadExportStats();
 }
 
 // ── Load all ──────────────────────────────────────────────────────────────────
@@ -52,9 +53,10 @@ async function loadAll() {
   renderDash(d);
 
   const active = document.querySelector('.section.active')?.id.replace('section-','');
-  if (active === 'cameras') loadCameras(1);
-  if (active === 'reports') loadReports();
-  if (active === 'export')  loadExportStats();
+  if (active === 'cameras')    loadCameras(1);
+  if (active === 'reports')    loadReports();
+  if (active === 'duplicates') loadDuplicates();
+  if (active === 'export')     loadExportStats();
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -82,6 +84,11 @@ function renderDash(d) {
   const nr = d.cameras_reported ?? 0;
   badge.textContent = nr;
   badge.classList.toggle('on', nr > 0);
+
+  const dbadge = document.getElementById('nbadge-dup');
+  const nd = d.cameras_duplicates ?? 0;
+  dbadge.textContent = nd;
+  dbadge.classList.toggle('on', nd > 0);
 }
 
 function bar(label, v, total, cls) {
@@ -315,14 +322,62 @@ async function deleteAllReported() {
   }
 }
 
+// ── Doublons ──────────────────────────────────────────────────────────────────
+async function loadDuplicates() {
+  const res = await api('/api/admin/duplicates');
+  if (!res.ok) { toast('Erreur', true); return; }
+  const cams = await res.json();
+
+  const badge = document.getElementById('nbadge-dup');
+  badge.textContent = cams.length;
+  badge.classList.toggle('on', cams.length > 0);
+
+  const tb = document.getElementById('dup-tbody');
+  if (!cams.length) {
+    tb.innerHTML = `<tr><td colspan="6"><div class="empty">✓ AUCUN DOUBLON EN ATTENTE</div></td></tr>`;
+    return;
+  }
+  tb.innerHTML = cams.map(c => `
+    <tr id="dr-${c.id}">
+      <td class="td-m">${c.id}</td>
+      <td class="td-d td-m">${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}</td>
+      <td><span class="bg ${c.cam_type}">${c.cam_type.toUpperCase()}</span></td>
+      <td><span class="bg ${c.source}">${c.source.toUpperCase()}</span></td>
+      <td class="td-d td-m">
+        #${c.dup_of} <span class="bg ${c.dup_source}">${c.dup_source.toUpperCase()}</span>
+        <span style="color:var(--dim)">${c.dup_lat.toFixed(5)}, ${c.dup_lng.toFixed(5)}</span>
+      </td>
+      <td>
+        <div style="display:flex;gap:4px;">
+          <a class="maplnk" href="/?lat=${c.lat}&lng=${c.lng}&z=18&cam=${c.id}" target="_blank">🗺</a>
+          <button class="sm danger" onclick="deleteCamera(${c.id},'dr-${c.id}',false,true)" title="Supprimer la caméra redondante">FUSIONNER</button>
+          <button class="sm amber" onclick="dismissDuplicate(${c.id},'dr-${c.id}')" title="Pas un doublon — garder les deux">IGNORER</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function dismissDuplicate(id, rowId) {
+  const res = await api(`/api/admin/cameras/${id}/dismiss-duplicate`, { method: 'POST' });
+  if (res.ok) {
+    document.getElementById(rowId)?.remove();
+    toast(`✓ Caméra ${id} — flag de doublon effacé`);
+    loadAll();
+  } else {
+    toast('⚠ Erreur', true);
+  }
+}
+
 // ── Delete ────────────────────────────────────────────────────────────────────
-async function deleteCamera(id, rowId, reloadRep = false) {
+async function deleteCamera(id, rowId, reloadRep = false, reloadDup = false) {
   const res = await api(`/api/admin/cameras/${id}`, { method: 'DELETE' });
   if (res.ok) {
     document.getElementById(rowId)?.remove();
     toast(`✓ Caméra ${id} supprimée`);
     loadAll();
     if (reloadRep) loadReports();
+    if (reloadDup) loadDuplicates();
   } else {
     toast('⚠ Erreur suppression', true);
   }

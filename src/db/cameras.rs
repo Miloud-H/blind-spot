@@ -1,5 +1,175 @@
 use sqlx::SqlitePool;
+use crate::geo;
 use crate::models::{Camera, CreateCameraRequest};
+
+// ── Déduplication cross-source ───────────────────────────────────────────────
+//
+// Deux caméras ne sont considérées comme "le même appareil physique" que si elles
+// sont proches ET du même type. La direction ne départage que pour 'fixed' (seul
+// type où elle est fiable) — un écart trop grand ou une direction inconnue rend le
+// verdict ambigu plutôt que de fusionner à l'aveugle (perte de données potentielle).
+
+const DUP_RADIUS_M: f64 = 8.0;
+const DUP_DIRECTION_TOLERANCE_DEG: f64 = 40.0;
+
+/// Résultat d'une recherche de doublon potentiel.
+#[derive(Clone, Copy)]
+pub struct DuplicateMatch {
+    pub id: i64,
+    /// true = même type + direction compatible (ou type sans direction fiable) → quasi-certain.
+    /// false = même type + proche mais direction incompatible/inconnue → ambigu, à signaler.
+    pub confident: bool,
+}
+
+#[derive(sqlx::FromRow)]
+struct CandidateRow {
+    id: i64,
+    lat: f64,
+    lng: f64,
+    direction: Option<f64>,
+}
+
+/// Écart angulaire absolu entre deux azimuts (0-360°), en tenant compte du wraparound.
+fn angular_diff_deg(a: f64, b: f64) -> f64 {
+    let d = (a - b).rem_euclid(360.0);
+    d.min(360.0 - d)
+}
+
+/// Cherche une caméra existante susceptible d'être le même appareil physique que
+/// (lat, lng, cam_type, direction). Pré-filtre par bounding box en SQL, confirme par
+/// Haversine en Rust. `exclude_id` permet d'ignorer la caméra elle-même lors d'un upsert.
+/// `source_filter` restreint la recherche à une source donnée (ex: 'user' lors d'un
+/// upsert OSM, pour ne comparer qu'aux contributions communautaires).
+pub async fn find_duplicate_candidate(
+    pool: &SqlitePool,
+    lat: f64,
+    lng: f64,
+    cam_type: &str,
+    direction: Option<f64>,
+    exclude_id: Option<i64>,
+    source_filter: Option<&str>,
+) -> sqlx::Result<Option<DuplicateMatch>> {
+    // Bbox large (marge) autour du rayon de dédup — filtrage grossier avant Haversine exact.
+    let deg_lat = DUP_RADIUS_M / 111_000.0 * 1.5;
+    let deg_lng = deg_lat / lat.to_radians().cos().max(0.2);
+
+    let rows: Vec<CandidateRow> = sqlx::query_as(
+        r#"
+        SELECT id, lat, lng, direction FROM cameras
+        WHERE cam_type = $1
+          AND lat BETWEEN $2 AND $3
+          AND lng BETWEEN $4 AND $5
+          AND ($6 IS NULL OR id != $6)
+          AND ($7 IS NULL OR source = $7)
+        "#,
+    )
+    .bind(cam_type)
+    .bind(lat - deg_lat).bind(lat + deg_lat)
+    .bind(lng - deg_lng).bind(lng + deg_lng)
+    .bind(exclude_id)
+    .bind(source_filter)
+    .fetch_all(pool)
+    .await?;
+
+    // Types sans direction fiable (couverture 360° ou coupole opaque) : proximité + type suffisent
+    // à évoquer un doublon, mais jamais avec certitude — toujours ambigu.
+    let type_has_direction = cam_type == "fixed";
+
+    let mut best: Option<DuplicateMatch> = None;
+    for row in rows {
+        let dist = geo::haversine_m(lat, lng, row.lat, row.lng);
+        if dist > DUP_RADIUS_M {
+            continue;
+        }
+
+        let confident = if type_has_direction {
+            match (direction, row.direction) {
+                (Some(a), Some(b)) => angular_diff_deg(a, b) <= DUP_DIRECTION_TOLERANCE_DEG,
+                _ => false, // direction manquante d'un côté → ambigu, pas de fusion silencieuse
+            }
+        } else {
+            false // dome/ptz/panoramic : jamais de fusion automatique, toujours revue admin
+        };
+
+        // Un match confiant prime sur un match ambigu déjà trouvé.
+        if best.is_none() || (confident && !best.as_ref().unwrap().confident) {
+            best = Some(DuplicateMatch { id: row.id, confident });
+        }
+    }
+
+    Ok(best)
+}
+
+/// Marque une caméra comme corroborée par une source indépendante (relève `verified`).
+pub async fn corroborate_camera(pool: &SqlitePool, id: i64) -> sqlx::Result<()> {
+    sqlx::query("UPDATE cameras SET verified = 1 WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Flag non-bloquant : signale qu'une caméra pourrait être un doublon d'une autre,
+/// sans fusionner ni supprimer — laisse la décision à une revue admin.
+pub async fn flag_possible_duplicate(pool: &SqlitePool, id: i64, of_id: i64) -> sqlx::Result<()> {
+    sqlx::query("UPDATE cameras SET possible_duplicate_of = ? WHERE id = ?")
+        .bind(of_id)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Efface le flag de doublon (revue admin : "ce n'est pas un doublon, garder les deux").
+/// Retourne `true` si une ligne a été affectée.
+pub async fn dismiss_possible_duplicate(pool: &SqlitePool, id: i64) -> sqlx::Result<bool> {
+    let affected = sqlx::query("UPDATE cameras SET possible_duplicate_of = NULL WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(affected > 0)
+}
+
+/// Supprime une caméra par id. Retourne `true` si une ligne a été supprimée.
+pub async fn delete_camera(pool: &SqlitePool, id: i64) -> sqlx::Result<bool> {
+    let affected = sqlx::query("DELETE FROM cameras WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(affected > 0)
+}
+
+/// Purge les caméras `source` non revues par un reseed depuis `grace_days` jours
+/// (probable disparition réelle plutôt qu'un raté ponctuel d'Overpass).
+/// Retourne les id supprimés, pour diffusion d'évènements `camera_deleted`.
+pub async fn prune_stale_cameras(
+    pool: &SqlitePool,
+    source: &str,
+    grace_days: i64,
+) -> sqlx::Result<Vec<i64>> {
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM cameras
+         WHERE source = $1
+           AND last_seen_at IS NOT NULL
+           AND julianday('now') - julianday(last_seen_at) > $2",
+    )
+    .bind(source)
+    .bind(grace_days as f64)
+    .fetch_all(pool)
+    .await?;
+
+    if !ids.is_empty() {
+        sqlx::query("DELETE FROM cameras WHERE source = ? AND last_seen_at IS NOT NULL AND julianday('now') - julianday(last_seen_at) > ?")
+            .bind(source)
+            .bind(grace_days as f64)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(ids)
+}
 
 // ── Lecture ──────────────────────────────────────────────────────────────────
 
@@ -58,9 +228,39 @@ pub async fn get_all_cameras(pool: &SqlitePool) -> sqlx::Result<Vec<Camera>> {
 
 // ── Écriture ─────────────────────────────────────────────────────────────────
 
-/// Insère une caméra communautaire (source = 'user').
-/// Retourne last_insert_rowid.
+/// Résultat de `insert_camera` : soit une nouvelle ligne créée, soit une caméra
+/// existante corroborée (doublon quasi-certain — rien de nouveau n'a été inséré).
+pub struct InsertOutcome {
+    pub id: i64,
+    pub merged: bool,
+}
+
+/// Insère une caméra communautaire (source = 'user'), avec dédup :
+/// - doublon quasi-certain (même type, même zone, direction compatible) → pas d'insertion,
+///   la caméra existante est marquée corroborée (`verified`) et son id est retourné.
+/// - doublon ambigu (même type, même zone, direction inconnue/incompatible) → insertion,
+///   mais `possible_duplicate_of` est renseigné pour une revue admin.
 pub async fn insert_camera(
+    pool: &SqlitePool,
+    req: &CreateCameraRequest,
+    created_from: &str,
+) -> sqlx::Result<InsertOutcome> {
+    let cam_type = req.cam_type.as_deref().unwrap_or("unknown");
+    let dup = find_duplicate_candidate(pool, req.lat, req.lng, cam_type, req.direction, None, None).await?;
+
+    if let Some(DuplicateMatch { id, confident: true }) = dup {
+        corroborate_camera(pool, id).await?;
+        return Ok(InsertOutcome { id, merged: true });
+    }
+
+    let id = insert_camera_row(pool, req, created_from).await?;
+    if let Some(DuplicateMatch { id: of_id, confident: false }) = dup {
+        flag_possible_duplicate(pool, id, of_id).await?;
+    }
+    Ok(InsertOutcome { id, merged: false })
+}
+
+async fn insert_camera_row(
     pool: &SqlitePool,
     req: &CreateCameraRequest,
     created_from: &str,
@@ -86,6 +286,32 @@ pub async fn insert_camera(
     Ok(result.last_insert_rowid())
 }
 
+/// Après upsert d'une caméra 'osm'/'inferred', compare aux caméras communautaires
+/// à proximité : un doublon quasi-certain (même type + direction compatible) est résolu
+/// en supprimant l'entrée communautaire désormais redondante (l'officielle fait foi) et en
+/// corroborant la nouvelle ligne ; un doublon ambigu est simplement flaggé pour revue admin.
+async fn resolve_cross_source_duplicate(
+    pool: &SqlitePool,
+    new_id: i64,
+    lat: f64,
+    lng: f64,
+    cam_type: &str,
+    direction: Option<f64>,
+) -> sqlx::Result<()> {
+    let dup = find_duplicate_candidate(pool, lat, lng, cam_type, direction, None, Some("user")).await?;
+    match dup {
+        Some(DuplicateMatch { id, confident: true }) => {
+            delete_camera(pool, id).await?;
+            corroborate_camera(pool, new_id).await?;
+        }
+        Some(DuplicateMatch { id, confident: false }) => {
+            flag_possible_duplicate(pool, id, new_id).await?;
+        }
+        None => {}
+    }
+    Ok(())
+}
+
 /// Upsert d'une caméra OSM (par osm_id). Appelé par le seed Overpass.
 /// `range_m` est extrait du tag `camera:range` ou vaut 30 m par défaut.
 pub async fn upsert_osm_camera(
@@ -100,19 +326,21 @@ pub async fn upsert_osm_camera(
     name: Option<&str>,
     note: Option<&str>,
 ) -> sqlx::Result<()> {
-    sqlx::query(
+    let id: i64 = sqlx::query_scalar(
         r#"
-        INSERT INTO cameras (osm_id, lat, lng, direction, fov, range_m, cam_type, name, note, source)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'osm')
+        INSERT INTO cameras (osm_id, lat, lng, direction, fov, range_m, cam_type, name, note, source, last_seen_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'osm', datetime('now'))
         ON CONFLICT(osm_id) DO UPDATE SET
-            lat       = excluded.lat,
-            lng       = excluded.lng,
-            direction = excluded.direction,
-            fov       = excluded.fov,
-            range_m   = excluded.range_m,
-            cam_type  = excluded.cam_type,
-            name      = excluded.name,
-            note      = excluded.note
+            lat          = excluded.lat,
+            lng          = excluded.lng,
+            direction    = excluded.direction,
+            fov          = excluded.fov,
+            range_m      = excluded.range_m,
+            cam_type     = excluded.cam_type,
+            name         = excluded.name,
+            note         = excluded.note,
+            last_seen_at = datetime('now')
+        RETURNING id
         "#,
     )
     .bind(osm_id)
@@ -124,8 +352,10 @@ pub async fn upsert_osm_camera(
     .bind(cam_type)
     .bind(name)
     .bind(note)
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
+
+    resolve_cross_source_duplicate(pool, id, lat, lng, cam_type, direction).await?;
 
     Ok(())
 }
@@ -142,17 +372,19 @@ pub async fn upsert_inferred_camera(
     name: &str,
     note: &str,
 ) -> sqlx::Result<()> {
-    sqlx::query(
+    let id: i64 = sqlx::query_scalar(
         r#"
-        INSERT INTO cameras (osm_id, lat, lng, direction, fov, range_m, cam_type, name, note, source)
-        VALUES ($1, $2, $3, NULL, 70.0, $4, $5, $6, $7, 'inferred')
+        INSERT INTO cameras (osm_id, lat, lng, direction, fov, range_m, cam_type, name, note, source, last_seen_at)
+        VALUES ($1, $2, $3, NULL, 70.0, $4, $5, $6, $7, 'inferred', datetime('now'))
         ON CONFLICT(osm_id) DO UPDATE SET
-            lat      = excluded.lat,
-            lng      = excluded.lng,
-            range_m  = excluded.range_m,
-            cam_type = excluded.cam_type,
-            name     = excluded.name,
-            note     = excluded.note
+            lat          = excluded.lat,
+            lng          = excluded.lng,
+            range_m      = excluded.range_m,
+            cam_type     = excluded.cam_type,
+            name         = excluded.name,
+            note         = excluded.note,
+            last_seen_at = datetime('now')
+        RETURNING id
         "#,
     )
     .bind(osm_id)
@@ -162,8 +394,10 @@ pub async fn upsert_inferred_camera(
     .bind(cam_type)
     .bind(name)
     .bind(note)
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
+
+    resolve_cross_source_duplicate(pool, id, lat, lng, cam_type, None).await?;
 
     Ok(())
 }

@@ -96,12 +96,14 @@ async fn main() -> anyhow::Result<()> {
     // Client HTTP partagé (seed + routing)
     let http_client = reqwest::Client::new();
 
+    // Canal d'événements WebSocket (capacité 64 — les clients lents droppent des events, pas grave)
+    // Créé avant les tâches de seed en arrière-plan pour qu'elles puissent diffuser les
+    // suppressions de caméras obsolètes en temps réel (voir startup.rs).
+    let (event_tx, _) = tokio::sync::broadcast::channel::<String>(64);
+
     // Tâches de seed (caméras OSM/inférées, bâtiments, graphe routier) — arrière-plan,
     // le serveur démarre immédiatement. Voir startup.rs.
-    let routing_ready = startup::spawn_seed_tasks(&pool, &http_client).await;
-
-    // Canal d'événements WebSocket (capacité 64 — les clients lents droppent des events, pas grave)
-    let (event_tx, _) = tokio::sync::broadcast::channel::<String>(64);
+    let routing_ready = startup::spawn_seed_tasks(&pool, &http_client, &event_tx).await;
 
     // Rate limiters : /api/route (10/min burst 3) et /api/cameras (60/min burst 10)
     let route_rl   = rate_limit::new_limiter(10,  3);
@@ -186,6 +188,8 @@ fn admin_routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/admin/stats",         get(handlers::admin::stats))
         .route("/api/admin/reports",       get(handlers::admin::list_reports))
+        .route("/api/admin/duplicates",    get(handlers::admin::list_duplicates))
+        .route("/api/admin/cameras/:id/dismiss-duplicate", post(handlers::admin::dismiss_duplicate))
         .route("/api/admin/cameras",       get(handlers::admin::list_cameras)
                                            .delete(handlers::admin::delete_cameras_bulk))
         .route("/api/admin/cameras/:id",   axum::routing::delete(handlers::admin::delete_camera)
